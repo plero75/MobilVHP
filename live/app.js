@@ -1,5 +1,5 @@
 /* ===============================
-   Dashboard Hippodrome – Live avec APIs PRIM (LineRef STIF corrigé)
+   Dashboard Hippodrome – Live avec référentiel complet des lignes
    =============================== */
 
 const PROXY = "https://ratp-proxy.hippodrome-proxy42.workers.dev/?url=";
@@ -9,7 +9,6 @@ const APIS = {
   SAINT: "https://nominis.cef.fr/json/nominis.php",
   RSS: "https://www.francetvinfo.fr/titres.rss",
   PRIM_STOP: (stopId) => `https://prim.iledefrance-mobilites.fr/marketplace/stop-monitoring?MonitoringRef=${stopId}`,
-  // CORRIGÉ: GeneralMessage attend STIF:Line::Cxxxxx: et non line:IDFM:Cxxxxx
   PRIM_GM: (cCode) => `https://prim.iledefrance-mobilites.fr/marketplace/general-message?LineRef=STIF:Line::${cCode}:`,
   PMU: (day) => `https://offline.turfinfo.api.pmu.fr/rest/client/7/programme/${day}`,
   VELIB: (station) => `https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/velib-disponibilite-en-temps-reel/records?where=stationcode%3D${station}&limit=1`
@@ -28,12 +27,12 @@ async function fetchAPI(url, timeout=15000){ const controller=new AbortControlle
 const clean=(s="")=>s.replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();
 const minutesFromISO=(iso)=> iso? Math.max(0,Math.round((new Date(iso).getTime()-Date.now())/60000)):null;
 
-const COLORS={ modes:{bus:'#0aa3df','rer-a':'#e5003a'}, lines:{'77':'#0aa3df','201':'#0aa3df','A':'#e5003a'} };
+const COLORS={ modes:{bus:'#0aa3df','rer-a':'#e5003a'}, lines:{'77':'#0aa3df','201':'#0aa3df','A':'#e5003a','101':'#0aa3df','106':'#0aa3df','108':'#0aa3df','110':'#0aa3df','112':'#0aa3df','111':'#0aa3df','281':'#0aa3df','N33':'#7b68ee'} };
 const colorFor=(g)=> COLORS.lines[g.lineId]||COLORS.modes[g.mode]||'#0aa3df';
 
-function setClock(){ const d=new Date(); qs('#datetime').textContent=`${d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})} — ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`; }
+function setClock(){ const d=new Date(); qs('#datetime').textContent=`${d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})} – ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`; }
 
-async function loadWeather(){ const d=await fetchAPI(APIS.WEATHER); const t=d?.current_weather?.temperature; qs('#weather').textContent=Number.isFinite(t)? `${Math.round(t)}°C`:'—'; }
+async function loadWeather(){ const d=await fetchAPI(APIS.WEATHER); const t=d?.current_weather?.temperature; qs('#weather').textContent=Number.isFinite(t)? `${Math.round(t)}°C`:'–'; }
 async function loadSaint(){ const d=await fetchAPI(APIS.SAINT); const p=d?.response?.prenom||d?.response?.prenoms?.[0]; qs('#saint').textContent=p? `Saint ${p}`:'Saint du jour'; }
 
 async function loadTrafficMessages(){ const cLines=['C01399','C01219','C01742']; const out=[]; for(const c of cLines){ const d=await fetchAPI(APIS.PRIM_GM(c)); const del=d?.Siri?.ServiceDelivery?.GeneralMessageDelivery||[]; del.forEach(x=> (x.InfoMessage||[]).forEach(m=>{ const txt=clean(m?.Content?.Message?.[0]?.MessageText?.[0]?.value||""); if(txt) out.push(txt); })); } setPrimMessages(out); }
@@ -47,12 +46,201 @@ async function loadVelib(){ const [d1,d2]=await Promise.all([fetchAPI(APIS.VELIB
 
 async function loadCourses(){ const d=new Date(); const day=`${String(d.getDate()).padStart(2,'0')}${String(d.getMonth()+1).padStart(2,'0')}${d.getFullYear()}`; const data=await fetchAPI(APIS.PMU(day)); const vin=[],eng=[]; (data?.programme?.reunions||[]).forEach(r=>{ const hip=r.hippodrome?.code; const list= hip==='VIN'?vin: hip==='ENG'?eng:null; if(!list) return; (r.courses||[]).forEach(c=>{ const ts=Date.parse(c.heureDepart); if(Number.isFinite(ts)&&ts>Date.now()) list.push({heure:new Date(ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}), lib:c.libelle, ref:`R${r.numOfficiel||''}C${c.numOrdre||''}`}); });}); qs('#races-vincennes').innerHTML= vin.length? vin.slice(0,3).map(c=>`${c.heure} - ${c.lib} (${c.ref})`).join('<br>'):'Aucune course prévue'; qs('#races-enghien').innerHTML= eng.length? eng.slice(0,3).map(c=>`${c.heure} - ${c.lib} (${c.ref})`).join('<br>'):'Aucune course prévue'; }
 
-function renderBoard(container,groups){ groups=[...groups].sort((a,b)=> a.lineId===b.lineId? (a.direction||'').localeCompare(b.direction||''):(""+a.lineId).localeCompare(""+b.lineId,'fr',{numeric:true})); container.innerHTML=''; if(!groups.length){ container.appendChild(el('div','placeholder','Aucune donnée disponible pour le moment.')); return; } groups.forEach(g=>{ const group=el('div','group'); const head=el('div','group-head'); head.style.borderBottom='1px dashed #e5e7eb'; head.style.paddingBottom='8px'; const pill=el('div','pill '+(g.mode==='rer-a'?'rer-a':'bus'), g.mode==='rer-a'?'A':g.lineId); pill.style.background=colorFor(g); const dir=el('div','dir', g.direction||''); head.append(pill,dir); group.appendChild(head); if(!g.trips?.length){ const none=el('div','row'); const w=el('div','wait'); w.append(el('div','minutes',''), el('div','label','attente')); const info=el('div','info'); info.append(el('div','dest','Aucun départ pour l\'instant'), el('div','via','')); const meta=el('div','meta'); meta.append(el('div','clock',''), el('div','status termine','Service terminé')); none.append(w,info,meta); group.appendChild(none);} else { g.trips.slice(0,3).forEach(t=>{ const row=el('div','row'); const wait=el('div','wait'); wait.append(el('div','minutes', t.waitMin!=null? String(t.waitMin):''), el('div','label','min')); const info=el('div','info'); info.append(el('div','dest', t.dest||'')); info.append(el('div','via', t.via? `via ${t.via}`:'')); const meta=el('div','meta'); meta.append(el('div','clock', t.timeStr||'')); if(t.status){ const map={retard:`Retard +${t.delayMin??0}`, supprime:'Supprimé', nondesservi:'Non desservi', deplace:'Arrêt déplacé', premier:'Premier', dernier:'Dernier', termine:'Service terminé'}; meta.append(el('div','status '+t.status, map[t.status]||'')); } row.append(wait,info,meta); group.appendChild(row); }); } container.appendChild(group); }); }
+function renderBoard(container,groups){ 
+  groups=[...groups].sort((a,b)=> {
+    if(a.lineId==='A'&&b.lineId!=='A') return -1;
+    if(a.lineId!=='A'&&b.lineId==='A') return 1;
+    if(a.lineId===b.lineId) return (a.direction||'').localeCompare(b.direction||'');
+    return (""+a.lineId).localeCompare(""+b.lineId,'fr',{numeric:true});
+  }); 
+  container.innerHTML=''; 
+  if(!groups.length){ container.appendChild(el('div','placeholder','Aucune donnée disponible pour le moment.')); return; } 
+  
+  groups.forEach(g=>{ 
+    const group=el('div','group'); 
+    const head=el('div','group-head'); 
+    head.style.borderBottom='1px dashed #e5e7eb'; 
+    head.style.paddingBottom='8px'; 
+    const pill=el('div','pill '+(g.mode==='rer-a'?'rer-a':'bus'), g.mode==='rer-a'?'A':g.lineId); 
+    pill.style.background=colorFor(g); 
+    const dir=el('div','dir', g.direction||''); 
+    head.append(pill,dir); 
+    group.appendChild(head); 
+    
+    if(!g.trips?.length){ 
+      const none=el('div','row no-service'); 
+      const w=el('div','wait'); 
+      w.append(el('div','minutes','–'), el('div','label','')); 
+      const info=el('div','info'); 
+      
+      // Distinguer "pas de passage" vs "hors service"
+      const now = new Date().getHours();
+      const isNightService = g.lineId === 'N33';
+      const isOffPeak = now < 6 || now > 22;
+      
+      if(isNightService && !isOffPeak) {
+        info.append(el('div','dest','Service de nuit'), el('div','via','Circulation nocturne uniquement'));
+      } else if(!g.hasRealTimeData && isOffPeak) {
+        info.append(el('div','dest','Service arrêté'), el('div','via','Hors horaires de circulation'));
+      } else {
+        info.append(el('div','dest','Pas de passage prévu'), el('div','via','Service en cours'));
+      }
+      
+      const meta=el('div','meta'); 
+      meta.append(el('div','clock',''), el('div','status termine',g.hasRealTimeData?'Temps réel':'Théorique')); 
+      none.append(w,info,meta); 
+      group.appendChild(none);
+    } else { 
+      g.trips.slice(0,3).forEach(t=>{ 
+        const row=el('div','row'); 
+        const wait=el('div','wait'); 
+        wait.append(el('div','minutes', t.waitMin!=null? String(t.waitMin):''), el('div','label','min')); 
+        const info=el('div','info'); 
+        info.append(el('div','dest', t.dest||'')); 
+        info.append(el('div','via', t.via? `via ${t.via}`:'')); 
+        const meta=el('div','meta'); 
+        meta.append(el('div','clock', t.timeStr||'')); 
+        if(t.status){ 
+          const map={retard:`Retard +${t.delayMin??0}`, supprime:'Supprimé', nondesservi:'Non desservi', deplace:'Arrêt déplacé', premier:'Premier', dernier:'Dernier', termine:'Service terminé'}; 
+          meta.append(el('div','status '+t.status, map[t.status]||'')); 
+        } 
+        row.append(wait,info,meta); 
+        group.appendChild(row); 
+      }); 
+    } 
+    container.appendChild(group); 
+  }); 
+}
 
-const EXPECTED={ 'col-hpv-77':[{lineId:'77',mode:'bus',direction:'Direction Joinville RER'},{lineId:'77',mode:'bus',direction:'Direction Plateau de Gravelle'}], 'col-breuil-77-201':[{lineId:'77',mode:'bus',direction:'Direction Joinville RER'},{lineId:'201',mode:'bus',direction:'Direction Porte Dorée'}], 'col-joinville-rer-a':[{lineId:'A',mode:'rer-a',direction:'Vers Paris / La Défense'},{lineId:'A',mode:'rer-a',direction:'Vers Boissy‑Saint‑Léger'}] };
+// RÉFÉRENTIEL COMPLET DES LIGNES PAR ARRÊT (données officielles)
+const STATIC_LINES={
+  'col-joinville-rer-a':[
+    {lineId:'A',mode:'rer-a',direction:'Vers Paris / La Défense'},
+    {lineId:'A',mode:'rer-a',direction:'Vers Boissy‑Saint‑Léger'},
+    {lineId:'77',mode:'bus',direction:'Direction Gare de Lyon'},
+    {lineId:'77',mode:'bus',direction:'Direction Plateau de Gravelle'},
+    {lineId:'101',mode:'bus',direction:'Direction Château de Vincennes'},
+    {lineId:'101',mode:'bus',direction:'Direction Montgallet'},
+    {lineId:'106',mode:'bus',direction:'Direction République'},
+    {lineId:'106',mode:'bus',direction:'Direction Créteil Université'},
+    {lineId:'108',mode:'bus',direction:'Direction Maisons‑Alfort'},
+    {lineId:'108',mode:'bus',direction:'Direction Créteil Échat'},
+    {lineId:'110',mode:'bus',direction:'Direction Créteil Préfecture'},
+    {lineId:'110',mode:'bus',direction:'Direction République'},
+    {lineId:'112',mode:'bus',direction:'Direction École du Breuil'},
+    {lineId:'112',mode:'bus',direction:'Direction Château de Vincennes'},
+    {lineId:'201',mode:'bus',direction:'Direction Champigny la Plage'},
+    {lineId:'201',mode:'bus',direction:'Direction Porte Dorée'},
+    {lineId:'281',mode:'bus',direction:'Direction Torcy RER'},
+    {lineId:'281',mode:'bus',direction:'Direction École Vétérinaire'},
+    {lineId:'N33',mode:'bus',direction:'Direction Château de Vincennes (Noctilien)'}
+  ],
+  'col-hpv-77':[
+    {lineId:'77',mode:'bus',direction:'Direction Gare de Lyon'},
+    {lineId:'77',mode:'bus',direction:'Direction Joinville RER'},
+    {lineId:'111',mode:'bus',direction:'Direction Château de Vincennes'},
+    {lineId:'111',mode:'bus',direction:'Direction République'},
+    {lineId:'112',mode:'bus',direction:'Direction École du Breuil'},
+    {lineId:'112',mode:'bus',direction:'Direction Château de Vincennes'},
+    {lineId:'201',mode:'bus',direction:'Direction Champigny la Plage'},
+    {lineId:'201',mode:'bus',direction:'Direction Porte Dorée'}
+  ],
+  'col-breuil-77-201':[
+    {lineId:'A',mode:'rer-a',direction:'Vers Paris / La Défense'},
+    {lineId:'A',mode:'rer-a',direction:'Vers Boissy‑Saint‑Léger'},
+    {lineId:'77',mode:'bus',direction:'Direction Gare de Lyon'},
+    {lineId:'77',mode:'bus',direction:'Direction Joinville RER'},
+    {lineId:'101',mode:'bus',direction:'Direction Château de Vincennes'},
+    {lineId:'101',mode:'bus',direction:'Direction Montgallet'},
+    {lineId:'106',mode:'bus',direction:'Direction République'},
+    {lineId:'106',mode:'bus',direction:'Direction Créteil Université'},
+    {lineId:'108',mode:'bus',direction:'Direction Maisons‑Alfort'},
+    {lineId:'108',mode:'bus',direction:'Direction Créteil Échat'},
+    {lineId:'110',mode:'bus',direction:'Direction Créteil Préfecture'},
+    {lineId:'110',mode:'bus',direction:'Direction République'},
+    {lineId:'112',mode:'bus',direction:'Direction École du Breuil'},
+    {lineId:'112',mode:'bus',direction:'Direction Château de Vincennes'},
+    {lineId:'201',mode:'bus',direction:'Direction Champigny la Plage'},
+    {lineId:'201',mode:'bus',direction:'Direction Porte Dorée'},
+    {lineId:'281',mode:'bus',direction:'Direction Torcy RER'},
+    {lineId:'281',mode:'bus',direction:'Direction École Vétérinaire'},
+    {lineId:'N33',mode:'bus',direction:'Direction Château de Vincennes (Noctilien)'}
+  ]
+};
 
-async function loadTransportData(){ const [rerData,hippoData,breuilData]=await Promise.all([fetchStopData(STOP_IDS.RER_A),fetchStopData(STOP_IDS.HIPPODROME),fetchStopData(STOP_IDS.BREUIL)]); const rerByDir=new Map(); rerData.forEach(v=>{ if(v.lineId!=='A') return; const key=v.dest.toLowerCase().includes('boissy')?'boissy':'paris'; if(!rerByDir.has(key)) rerByDir.set(key,[]); rerByDir.get(key).push({waitMin:v.minutes,timeStr:v.timeStr,dest:v.dest,status:v.cancelled?'supprime':(v.delayMin>0?'retard':null),delayMin:v.delayMin}); }); const rerGroups=[...rerByDir.entries()].map(([k,trips])=>({lineId:'A',mode:'rer-a',direction:k==='boissy'?'Vers Boissy‑Saint‑Léger':'Vers Paris / La Défense',trips:trips.slice(0,3)})); const hippoByDir=new Map(); hippoData.filter(v=>v.lineId==='C01399').forEach(v=>{ const key=v.dest.toLowerCase().includes('joinville')?'joinville':'gravelle'; if(!hippoByDir.has(key)) hippoByDir.set(key,[]); hippoByDir.get(key).push({waitMin:v.minutes,timeStr:v.timeStr,dest:v.dest,status:v.cancelled?'supprime':(v.delayMin>0?'retard':null),delayMin:v.delayMin}); }); const hippoGroups=[...hippoByDir.entries()].map(([k,trips])=>({lineId:'77',mode:'bus',direction:k==='joinville'?'Direction Joinville RER':'Direction Plateau de Gravelle',trips:trips.slice(0,3)})); const breuilGroups=[]; const breuil77=breuilData.filter(v=>v.lineId==='C01399'); const breuil201=breuilData.filter(v=>v.lineId==='C01219'); if(breuil77.length) breuilGroups.push({lineId:'77',mode:'bus',direction:'Direction Joinville RER',trips:breuil77.slice(0,3).map(v=>({waitMin:v.minutes,timeStr:v.timeStr,dest:v.dest,status:v.cancelled?'supprime':(v.delayMin>0?'retard':null),delayMin:v.delayMin}))}); if(breuil201.length) breuilGroups.push({lineId:'201',mode:'bus',direction:'Direction Porte Dorée',trips:breuil201.slice(0,3).map(v=>({waitMin:v.minutes,timeStr:v.timeStr,dest:v.dest,status:v.cancelled?'supprime':(v.delayMin>0?'retard':null),delayMin:v.delayMin}))}); const dataByCol={'col-joinville-rer-a':rerGroups,'col-hpv-77':hippoGroups,'col-breuil-77-201':breuilGroups}; Object.keys(EXPECTED).forEach(id=>{ const expected=EXPECTED[id]; const current=dataByCol[id]||[]; const merged=[]; expected.forEach(exp=>{ const f=current.find(g=>g.lineId===exp.lineId&&g.mode===exp.mode&&g.direction===exp.direction); merged.push(f? f:{...exp,trips:[]}); }); const cont=qs('#'+id+' .board'); if(cont) renderBoard(cont,merged); }); }
+// CODES LIGNE PRIM RÉELS (mapping C-codes)
+const LINE_CODES={'77':'C01399','201':'C01219','A':'C01742','101':'C01260','106':'C01371','108':'C01374','110':'C01376','112':'C01379','111':'C01377','281':'C01521','N33':'C01833'};
 
-async function init(){ setClock(); setInterval(setClock,30_000); await Promise.allSettled([loadWeather(),loadSaint(),loadTrafficMessages(),loadTransportData(),loadNews(),loadVelib(),loadCourses()]); setInterval(loadTransportData,60_000); setInterval(loadTrafficMessages,300_000); setInterval(()=>Promise.allSettled([loadNews(),loadVelib(),loadCourses()]),600_000); }
+async function loadTransportData(){
+  const [rerData,hippoData,breuilData]=await Promise.all([
+    fetchStopData(STOP_IDS.RER_A),
+    fetchStopData(STOP_IDS.HIPPODROME),
+    fetchStopData(STOP_IDS.BREUIL)
+  ]);
+  
+  // Fonction pour fusionner statique + temps réel
+  function mergeStaticWithRealTime(staticLines, realTimeData, stopName) {
+    return staticLines.map(staticLine => {
+      // Chercher données temps réel pour cette ligne
+      const cCode = LINE_CODES[staticLine.lineId];
+      const liveTrips = realTimeData
+        .filter(v => v.lineId === cCode)
+        .filter(v => {
+          if(!v.dest) return true;
+          // Filtrage basique par destination pour direction
+          const destLower = v.dest.toLowerCase();
+          const dirLower = staticLine.direction.toLowerCase();
+          if(dirLower.includes('paris') || dirLower.includes('défense')) return destLower.includes('paris') || destLower.includes('châtelet') || destLower.includes('défense');
+          if(dirLower.includes('boissy')) return destLower.includes('boissy');
+          if(dirLower.includes('gare de lyon') || dirLower.includes('lyon')) return destLower.includes('lyon') || destLower.includes('gare');
+          if(dirLower.includes('joinville')) return destLower.includes('joinville');
+          if(dirLower.includes('château') || dirLower.includes('vincennes')) return destLower.includes('château') || destLower.includes('vincennes');
+          if(dirLower.includes('république')) return destLower.includes('république');
+          if(dirLower.includes('créteil')) return destLower.includes('créteil');
+          if(dirLower.includes('montgallet')) return destLower.includes('montgallet');
+          if(dirLower.includes('maisons')) return destLower.includes('maisons');
+          if(dirLower.includes('champigny')) return destLower.includes('champigny');
+          if(dirLower.includes('porte dorée')) return destLower.includes('porte') || destLower.includes('dorée');
+          if(dirLower.includes('école') || dirLower.includes('breuil')) return destLower.includes('école') || destLower.includes('breuil');
+          if(dirLower.includes('torcy')) return destLower.includes('torcy');
+          return true; // Défaut: inclure
+        })
+        .map(v => ({
+          waitMin: v.minutes,
+          timeStr: v.timeStr,
+          dest: v.dest,
+          status: v.cancelled ? 'supprime' : (v.delayMin > 0 ? 'retard' : null),
+          delayMin: v.delayMin
+        }));
+      
+      return {
+        ...staticLine,
+        trips: liveTrips.slice(0, 3),
+        hasRealTimeData: liveTrips.length > 0
+      };
+    });
+  }
+  
+  // Application par colonne
+  const dataByCol = {
+    'col-joinville-rer-a': mergeStaticWithRealTime(STATIC_LINES['col-joinville-rer-a'], rerData, 'Joinville RER'),
+    'col-hpv-77': mergeStaticWithRealTime(STATIC_LINES['col-hpv-77'], hippoData, 'Hippodrome'),
+    'col-breuil-77-201': mergeStaticWithRealTime(STATIC_LINES['col-breuil-77-201'], breuilData, 'École du Breuil')
+  };
+  
+  // Rendu final
+  Object.keys(dataByCol).forEach(colId => {
+    const cont = qs('#'+colId+' .board');
+    if(cont) renderBoard(cont, dataByCol[colId]);
+  });
+}
+
+async function init(){
+  setClock(); setInterval(setClock,30_000);
+  await Promise.allSettled([loadWeather(),loadSaint(),loadTrafficMessages(),loadTransportData(),loadNews(),loadVelib(),loadCourses()]);
+  setInterval(loadTransportData,60_000);
+  setInterval(loadTrafficMessages,300_000);
+  setInterval(()=>Promise.allSettled([loadNews(),loadVelib(),loadCourses()]),600_000);
+}
 
 init().catch(console.error);
