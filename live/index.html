@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Dashboard Hippodrome – Live</title>
+  <title>Dashboard Hippodrome – Live IDFM</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <!-- ===== HEADER PRINCIPAL ===== -->
-  <header class="header-main" id="header-main">
+  <header class="header-main">
     <div class="header-left">
       <div class="brand">
         <span class="brand-badge">LIVE</span>
@@ -22,74 +22,96 @@
     </div>
   </header>
 
-  <!-- ===== HEADER BIS (MESSAGES PRIM /general-message) ===== -->
+  <!-- ===== MESSAGES TRAFIC IDFM ===== -->
   <section class="header-bis" id="prim-messages">
     <div class="message">Chargement des messages trafic...</div>
   </section>
 
-  <!-- ===== GRILLE ===== -->
-  <main class="grid">
+  <!-- ===== CONTENU PRINCIPAL (single scroll) ===== -->
+  <main class="main-content">
 
-    <!-- LIGNE 1 : 3 colonnes -->
-    <section class="panel" id="col-hpv-77">
-      <h2>Hippodrome de Vincennes — Bus 77</h2>
-      <div class="board" data-persist="true"></div>
-    </section>
+    <!-- SECTION TRANSPORTS (RER + BUS) -->
+    <div class="transport-section">
+      
+      <!-- RER A -->
+      <div class="transport-panel rer-panel">
+        <h2>🚇 RER A — Joinville-le-Pont</h2>
+        <div class="board" id="board-rer-a"></div>
+      </div>
 
-    <section class="panel" id="col-breuil-77-201">
-      <h2>École du Breuil — Bus 77 & 201</h2>
-      <div class="board" data-persist="true"></div>
-    </section>
+      <!-- TOUS LES BUS JOINVILLE -->
+      <div class="transport-panel bus-panel">
+        <h2>🚌 Tous bus — Joinville-le-Pont</h2>
+        <div class="board" id="board-joinville-bus"></div>
+      </div>
 
-    <section class="panel" id="col-joinville-rer-a">
-      <h2>Joinville‑le‑Pont — RER A</h2>
-      <div class="board" data-persist="true"></div>
-    </section>
+      <!-- BUS HIPPODROME -->
+      <div class="transport-panel bus-panel">
+        <h2>🚌 Bus — Hippodrome Vincennes</h2>
+        <div class="board" id="board-hippodrome"></div>
+      </div>
 
-    <!-- LIGNE 2 : 2 colonnes -->
-    <section class="panel span-2" id="col-joinville-all-bus">
-      <h2>Joinville‑le‑Pont — Tous bus</h2>
-      <div class="board" data-persist="true"></div>
-    </section>
+      <!-- BUS BREUIL -->
+      <div class="transport-panel bus-panel">
+        <h2>🚌 Bus — École du Breuil</h2>
+        <div class="board" id="board-breuil"></div>
+      </div>
+    </div>
 
-    <!-- LIGNE 3 -->
-    <section class="panel" id="col-velib-vincennes">
-      <h2>Vélib' — Hippodrome de Vincennes</h2>
-      <div class="velib" id="velib-vincennes">—</div>
-    </section>
+    <!-- SECTION INFOS PRATIQUES -->
+    <div class="info-section">
+      
+      <!-- CARTE TRAFIC -->
+      <div class="info-panel traffic-panel">
+        <h2>🗺️ Trafic routier</h2>
+        <div class="traffic-content">
+          <iframe 
+            src="https://www.sytadin.fr/gp/maplabels.do?zoom=3&centreX=651000&centreY=6867000"
+            width="100%" 
+            height="300"
+            frameborder="0"
+            title="Carte trafic Sytadin">
+          </iframe>
+        </div>
+      </div>
 
-    <section class="panel" id="col-velib-breuil">
-      <h2>Vélib' — École du Breuil</h2>
-      <div class="velib" id="velib-breuil">—</div>
-    </section>
+      <!-- PROCHAINES COURSES -->
+      <div class="info-panel races-panel">
+        <h2>🏇 Prochaines courses</h2>
+        <div class="races-content">
+          <div class="race-venue">
+            <h3>Vincennes</h3>
+            <div id="races-vincennes">Chargement...</div>
+          </div>
+          <div class="race-venue">
+            <h3>Enghien</h3>
+            <div id="races-enghien">Chargement...</div>
+          </div>
+        </div>
+      </div>
 
-    <!-- LIGNE 4 -->
-    <section class="panel" id="col-trafic-routier">
-      <h2>Trafic routier</h2>
-      <div class="traffic" id="traffic">—</div>
-    </section>
+      <!-- VÉLIB -->
+      <div class="info-panel velib-panel">
+        <h2>🚲 Vélib'</h2>
+        <div class="velib-content">
+          <div class="velib-station">
+            <h3>Hippodrome Vincennes</h3>
+            <div id="velib-vincennes">—</div>
+          </div>
+          <div class="velib-station">
+            <h3>École du Breuil</h3>
+            <div id="velib-breuil">—</div>
+          </div>
+        </div>
+      </div>
 
-    <section class="panel" id="col-perturbations-idfm">
-      <h2>Perturbations IDFM</h2>
-      <div class="prim" id="prim">—</div>
-    </section>
+      <!-- NEWS -->
+      <div class="info-panel news-panel">
+        <h2>📰 Flash News — France Info</h2>
+        <div id="news">Chargement...</div>
+      </div>
 
-    <!-- LIGNE 5 -->
-    <section class="panel span-2" id="col-flash-news">
-      <h2>Flash News — France Info</h2>
-      <div class="news" id="news">—</div>
-    </section>
-
-    <!-- LIGNE 6 -->
-    <section class="panel" id="col-courses-vincennes">
-      <h2>Prochaines courses — Vincennes</h2>
-      <div class="races" id="races-vincennes">—</div>
-    </section>
-
-    <section class="panel" id="col-courses-enghien">
-      <h2>Prochaines courses — Enghien</h2>
-      <div class="races" id="races-enghien">—</div>
-    </section>
+    </div>
 
   </main>
 
