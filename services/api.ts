@@ -1,7 +1,6 @@
-
 // ============================================================================
 // 🌍 DATA FETCHING LAYER – Dashboard Transports Vincennes
-// Version corrigée et optimisée (PRIM v2, IDFM, PMU, OpenDataSoft)
+// Version corrigée avec retry, timeouts configurables et feedback
 // ============================================================================
 
 import {
@@ -15,7 +14,8 @@ import {
   PRIM_GM,
   NAVI_SCHEDULE,
   PMU_DAY_URL,
-  NAVITIA_BASE
+  NAVITIA_BASE,
+  API_CONFIG
 } from '../constants';
 
 import type { Visit, LineMeta, GtfsFallback, Course, BusSummary, Direction } from '../types';
@@ -24,36 +24,46 @@ import type { Visit, LineMeta, GtfsFallback, Course, BusSummary, Direction } fro
 // 🔧 UTILS GÉNÉRIQUES
 // ============================================================================
 
-// JSON fetch sécurisé avec proxy automatique
-async function fetchJSON<T>(url: string, timeout = 20000): Promise<T | null> {
-  const finalUrl = url.startsWith(PROXY) ? url : PROXY + encodeURIComponent(url);
-  try {
+async function wait(ms: number) { return new Promise(res => setTimeout(res, ms)); }
+
+async function fetchWithRetry<T>(input: RequestInfo | URL, init: RequestInit & { timeout?: number } = {}, retries = API_CONFIG.RETRY_COUNT): Promise<T | null> {
+  const timeout = init.timeout ?? API_CONFIG.TIMEOUT;
+  const finalInit: RequestInit = { ...init, cache: 'no-store', signal: undefined };
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
-    const response = await fetch(finalUrl, { signal: controller.signal, cache: "no-store" });
-    clearTimeout(timer);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json() as T;
-  } catch (e: any) {
-    console.error("fetchJSON failed for", url, e.message);
-    return null;
+    try {
+      const resp = await fetch(input, { ...finalInit, signal: controller.signal });
+      clearTimeout(timer);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return await resp.json() as T;
+      // @ts-ignore
+      return await resp.text();
+    } catch (e: any) {
+      clearTimeout(timer);
+      if (attempt === retries) {
+        console.error('fetchWithRetry failed', input.toString(), e.message);
+        return null;
+      }
+      await wait(API_CONFIG.RETRY_DELAY * (attempt + 1));
+    }
   }
+  return null;
+}
+
+// JSON fetch sécurisé avec proxy automatique
+async function fetchJSON<T>(url: string, timeout = API_CONFIG.TIMEOUT): Promise<T | null> {
+  const finalUrl = url.startsWith(PROXY) ? url : PROXY + encodeURIComponent(url);
+  return fetchWithRetry<T>(finalUrl, { timeout });
 }
 
 // Lecture texte simple (RSS / XML)
-async function fetchText(url: string, timeout = 20000): Promise<string> {
+async function fetchText(url: string, timeout = API_CONFIG.TIMEOUT): Promise<string> {
   const finalUrl = url.startsWith(PROXY) ? url : PROXY + encodeURIComponent(url);
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    const response = await fetch(finalUrl, { signal: controller.signal, cache: "no-store" });
-    clearTimeout(timer);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.text();
-  } catch (e: any) {
-    console.error("fetchText failed for", url, e.message);
-    return "";
-  }
+  const res = await fetchWithRetry<string>(finalUrl, { timeout });
+  return (res as any) || '';
 }
 
 const clean = (s = "") => s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -130,7 +140,6 @@ export const fetchStopMonitoring = async (stopId: string): Promise<Visit[]> => {
     const aimed = call.AimedDepartureTime || call.AimedArrivalTime || null;
     const minutes = minutesFromISO(expected);
 
-    // calcul du retard éventuel
     let delayMin = null;
     if (expected && aimed) {
       const d = Math.round((new Date(expected).getTime() - new Date(aimed).getTime()) / 60000);
@@ -143,11 +152,6 @@ export const fetchStopMonitoring = async (stopId: string): Promise<Visit[]> => {
   });
 };
 
-// ============================================================================
-// 🚦 INFO TRAFIC (general-message par ligne)
-// ============================================================================
-
-// Switched from Promise.all to a sequential for...of loop to avoid hitting API rate limits (HTTP 429).
 export const fetchTrafficMessages = async (lineRefs: string[]): Promise<string[]> => {
   const messages: string[] = [];
   for (const ref of lineRefs) {
@@ -200,18 +204,11 @@ export const getMetaByCode = async (code: string): Promise<LineMeta> => {
 // 📅 GTFS FALLBACK – Horaires théoriques Navitia
 // ============================================================================
 
-/**
- * Converts a SIRI Stop ID (e.g., "STIF:StopArea:SP:12345:") to a Navitia Stop Area ID format
- * required for GTFS schedule lookups (e.g., "stop_area:IDFM:12345").
- * @param siriId The SIRI-formatted Stop ID.
- * @returns The Navitia-formatted Stop Area ID.
- */
 const siriToNavitiaStopArea = (siriId: string): string => {
   const match = siriId.match(/SP:(\d+):/);
   if (match && match[1]) {
     return `stop_area:IDFM:${match[1]}`;
   }
-  // Fallback if the format is unexpected, though this shouldn't happen with correct constants.
   return siriId;
 };
 
@@ -219,7 +216,7 @@ export const getDailySchedule = async (lineId: string, siriStopId: string): Prom
     try {
         const navitiaStopId = siriToNavitiaStopArea(siriStopId);
         const dayStart = ymdhm(startOfDay(new Date()));
-        const data = await fetchJSON<any>(NAVI_SCHEDULE(lineId, navitiaStopId, dayStart) + '&count=200'); // Fetch all day
+        const data = await fetchJSON<any>(NAVI_SCHEDULE(lineId, navitiaStopId, dayStart) + '&count=200');
         const times = data?.stop_schedules?.[0]?.date_times;
         if (Array.isArray(times) && times.length > 0) {
             const first = navitiaTimeToISO(times[0].date_time);
@@ -266,7 +263,7 @@ export const gtfsFallback = async (lineId: string, siriStopId: string): Promise<
 };
 
 // ============================================================================
-// 🐎 COURSES HIPPIQUES – PMU (via proxy Cloudflare)
+// 🐎 COURSES HIPPIQUES – PMU (via proxy non nécessaire)
 // ============================================================================
 
 export const fetchCourses = async (): Promise<{ vin: Course[], eng: Course[] }> => {
@@ -325,13 +322,11 @@ export const discoverBusLines = async (stopAreaId: string) => {
 };
 
 export const fetchAllBusesSummary = async (navitiaStopAreaId: string, siriStopId: string, perDir: number = 3): Promise<BusSummary[]> => {
-    // 1. Discover lines
     const discoveredLines = await discoverBusLines(navitiaStopAreaId);
     if (!discoveredLines.length) return [];
     
     const lineMetaMap = new Map<string, any>(discoveredLines.map(l => [l.lineId, l]));
 
-    // 2. Fetch planned schedules and real-time data in parallel
     const plannedSchedulesPromises = discoveredLines.map(line => 
         getDailySchedule(line.lineId, siriStopId)
     );
@@ -346,10 +341,9 @@ export const fetchAllBusesSummary = async (navitiaStopAreaId: string, siriStopId
         plannedSchedulesMap.set(line.lineId, plannedSchedules[index]);
     });
 
-    // 3. Group real-time visits by line and direction
     const byKey = new Map<string, { lineId: string; dest: string; list: Visit[] }>();
     realtimeVisits.forEach(v => {
-        if (!v.lineId || !lineMetaMap.has(v.lineId)) return; // Filter for discovered buses
+        if (!v.lineId || !lineMetaMap.has(v.lineId)) return;
         const key = v.lineId + "|" + v.dest.toLowerCase();
         if (!byKey.has(key)) byKey.set(key, { lineId: v.lineId, dest: v.dest, list: [] });
         if (v.minutes !== null) byKey.get(key)!.list.push(v);
@@ -364,7 +358,6 @@ export const fetchAllBusesSummary = async (navitiaStopAreaId: string, siriStopId
         });
     }
 
-    // 4. Build final summary
     const summary: BusSummary[] = discoveredLines.map(lineInfo => {
         const lineId = lineInfo.lineId;
         const lineGroup = byLine.get(lineId);
