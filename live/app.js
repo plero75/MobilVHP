@@ -1,5 +1,5 @@
 /* ===============================
-   Dashboard Hippodrome – Live avec APIs PRIM (version corrigée finale)
+   Dashboard Hippodrome – Live avec APIs PRIM (version cor rigée finale)
    =============================== */
 
 const PROXY = "https://ratp-proxy.hippodrome-proxy42.workers.dev/?url=";
