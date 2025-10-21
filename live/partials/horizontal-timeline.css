@@ -1,0 +1,15 @@
+/* === TIME-LINE HORIZONTAL (statuts + retard heure barrée) === */
+.time-line{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-items:center;margin-top:8px}
+.time-col{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 4px;border-left:2px solid rgba(255,255,255,.2)}
+.time-col:first-child{border-left:none}
+.time-col .minutes{font-size:2.4rem;font-weight:1000;line-height:1;color:#fff;font-variant-numeric:tabular-nums}
+.time-col .clock{font-variant-numeric:tabular-nums;font-size:1.4rem;color:#e5e7eb}
+.time-col .clock-delayed{display:flex;flex-direction:column;align-items:center;gap:2px}
+.time-col .clock-delayed .aimed-time{text-decoration:line-through;opacity:.6;font-size:1.1rem;color:#9ca3af}
+.time-col .clock-delayed .expected-time{font-size:1.5rem;font-weight:1000;color:#fff}
+.time-col .badge{font-weight:900;font-size:1.1rem;padding:2px 8px;border-radius:8px}
+.badge.imminent{background:#ff6900;color:#1f2937;animation:blink .8s infinite}
+.badge.quai{background:#e2223b;color:#fff;animation:pulseRed 1s infinite}
+.badge.retard{background:#ff6900;color:#1f2937}
+.badge.supprime{background:#e2223b;color:#fff}
+.badge.premier,.badge.dernier{background:#ffd300;color:#111827}
