@@ -17,8 +17,8 @@ export const WEATHER_URL =
 // Saint du jour (Nominis)
 export const SAINT_URL = "https://nominis.cef.fr/json/nominis.php";
 
-// Actualités Le Monde (flux RSS)
-export const RSS_URL = "https://www.lemonde.fr/rss/une.xml";
+// Actualités France Info (remplacement Le Monde suite 403)
+export const RSS_URL = "https://www.francetvinfo.fr/titres.rss";
 
 // ============================================================================
 // 🚉 Île-de-France Mobilités – API PRIM (CORRIGÉ)
@@ -41,6 +41,14 @@ export const PRIM_GM = (lineId: string) =>
 // --- Horaires théoriques (GTFS fallback via Navitia) ---
 export const NAVI_SCHEDULE = (lineId: string, navitiaStopId: string, dt: string) =>
   `${NAVITIA_BASE}/lines/line:IDFM:${lineId}/stop_areas/${navitiaStopId}/stop_schedules?from_datetime=${dt}`;
+
+// --- Découverte stop_points dans une stop_area (évite 404) ---
+export const NAVI_STOP_POINTS = (navitiaStopAreaId: string) =>
+  `${NAVITIA_BASE}/stop_areas/${navitiaStopAreaId}/stop_points?count=200`;
+
+// --- Horaires via stop_points (plus fiable) ---
+export const NAVI_SCHEDULE_SP = (lineId: string, navitiaStopPointId: string, dt: string) =>
+  `${NAVITIA_BASE}/lines/line:IDFM:${lineId}/stop_points/${navitiaStopPointId}/stop_schedules?from_datetime=${dt}&count=200`;
 
 // ============================================================================
 // 🧭 Référentiel OpenData IDFM (lignes et couleurs)
