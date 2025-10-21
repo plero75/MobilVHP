@@ -1,6 +1,5 @@
 /* ===============================
-   Dashboard Hippodrome – Live avec APIs PRIM
-   Règles d'affichage :
+    Règles d'affichage :
    - Groupement par LIGNE → DIRECTION (max 3 prochains)
    - Attente en minutes en GRAS + heure exacte en dessous
    - Statuts texte (pas d'émojis) : Retard +X, Supprimé, Non desservi, Arrêt déplacé, Premier, Dernier, Service terminé
