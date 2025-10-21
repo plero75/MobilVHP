@@ -1,0 +1,114 @@
+/* ===== RESET & TOKENS ===== */
+:root{
+  --bg:#0b1220;
+  --ink:#0e1726;
+  --panel:#ffffff;
+  --muted:#6b7280;
+  --accent:#111827;
+  --idfm-rer-a:#e5003a;
+  --idfm-bus:#0aa3df;
+  --ok:#14532d;
+  --warn:#92400e;
+  --danger:#7f1d1d;
+  --radius:16px;
+  --shadow:0 8px 30px rgba(2,6,23,.18);
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:linear-gradient(180deg,#0b1220 0%, #0b1220 40%, #111a2f 100%);
+  font-family:var(--sans);
+  color:#0f172a;
+}
+
+/* ===== HEADER ===== */
+.header-main{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px;color:#fff;border-bottom:1px solid rgba(255,255,255,.08);
+  position:sticky;top:0;background:rgba(11,18,32,.75);backdrop-filter: blur(8px);
+}
+.header-left{display:flex;align-items:center;gap:16px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-badge{background:#00a0e2;color:#fff;font-weight:800;border-radius:10px;padding:6px 10px;letter-spacing:.04em}
+.datetime{font-variant-numeric:tabular-nums;opacity:.9}
+.header-right{display:flex;gap:16px;align-items:center;opacity:.95}
+.header-bis{
+  position:sticky;top:66px;z-index:5;
+
+  display:flex;gap:12px;flex-wrap:wrap;padding:10px 20px;background:#0e1526;border-bottom:1px solid rgba(255,255,255,.08);
+}
+.header-bis .message{color:#e5e7eb;background:#1f2937;border:1px solid #374151;border-radius:10px;padding:8px 12px;font-weight:700}
+.header-bis .message.critical{background:#7f1d1d;border-color:#991b1b}
+.header-bis .message.major{background:#92400e;border-color:#b45309}
+.header-bis .message.info{background:#0b3b66;border-color:#155e75}
+
+
+/* ===== GRID ===== */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:16px}
+/* Responsive tiers: desktop=3 cols, tablet=2, mobile=1 */
+@media (max-width:1280px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:780px){.grid{grid-template-columns:1fr}}
+
+@media (max-width:1400px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+
+.panel{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;min-height:120px}
+.panel h2{margin:2px 0 12px;font-size:1.05rem}
+.span-2{grid-column:span 2}
+
+/* ===== BOARD (transport lists) ===== */
+.board{display:flex;flex-direction:column;gap:10px}
+.group{border:1px solid #e5e7eb;border-radius:14px;padding:12px;background:#fff}
+.group-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.pill{min-width:36px;height:24px;border-radius:8px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800}
+.pill.bus{background:var(--idfm-bus)}
+.pill.rer-a{background:var(--idfm-rer-a)}
+.dir{font-weight:800;color:#111827}
+.row{display:grid;grid-template-columns:90px 1fr 120px;gap:12px;align-items:center;padding:8px;border-radius:10px;background:#fafafa;border:1px solid #eef2f7}
+.wait{display:flex;flex-direction:column;align-items:center;gap:2px}
+.wait .minutes{font-size:1.75rem;font-weight:1000;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.wait .label{font-size:.8rem;color:#6b7280}
+.info{display:flex;flex-direction:column;gap:2px}
+.info .dest{font-weight:700}
+.info .via{font-size:.85rem;color:#6b7280}
+.meta{font-size:.85rem;text-align:right}
+.meta .clock{font-variant-numeric:tabular-nums}
+.meta .status{font-weight:800}
+.status.retard{color:#b45309}
+.status.supprime{color:#991b1b}
+.status.nondesservi{color:#6b21a8}
+.status.deplace{color:#155e75}
+.status.premier{color:#14532d}
+.status.dernier{color:#7c2d12}
+.status.termine{color:#374151}
+
+/* ===== OTHER BLOCKS (velib, news, etc.) ===== */
+.velib,.traffic,.prim,.news,.races{color:#374151}
+.placeholder{color:#94a3b8;font-style:italic}
+
+/* ===== FOOTER-LIKE helper (optional) ===== */
+footer{color:#94a3b8;text-align:center;padding:20px}
+
+/* ===== FULL CARTOUCHE (service suspendu / non desservi / terminé) ===== */
+.group.full-takeover{
+  display:flex;flex-direction:column;gap:10px;
+  background:linear-gradient(180deg,#fff 0%, #fafafa 100%);
+  border:2px solid #cbd5e1;
+}
+.group.full-takeover .takeover-title{
+  display:flex;align-items:center;gap:10px;
+  font-weight:900;font-size:1.05rem;color:#111827;
+}
+.group.full-takeover .takeover-badge{
+  min-width:36px;height:24px;border-radius:8px;color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:800
+}
+.group.full-takeover .takeover-status{
+  font-weight:900;letter-spacing:.02em
+}
+.group.full-takeover .takeover-desc{
+  color:#475569
+}
