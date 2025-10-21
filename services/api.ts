@@ -1,6 +1,6 @@
 // ============================================================================
 // 🌍 DATA FETCHING LAYER – Dashboard Transports Vincennes
-// Version corrigée avec retry, timeouts configurables et feedback
+// Version corrigée avec retry, timeouts configurables, stop_points Navitia et fallbacks visibles
 // ============================================================================
 
 import {
@@ -13,6 +13,8 @@ import {
   ODS_BY_CD,
   PRIM_GM,
   NAVI_SCHEDULE,
+  NAVI_STOP_POINTS,
+  NAVI_SCHEDULE_SP,
   PMU_DAY_URL,
   NAVITIA_BASE,
   API_CONFIG
@@ -88,8 +90,8 @@ export const hhmm = (iso: string | null) => {
 };
 
 const navitiaTimeToISO = (navitiaTime: string) => {
-    return `${navitiaTime.slice(0, 4)}-${navitiaTime.slice(4, 6)}-${navitiaTime.slice(6, 8)}T${navitiaTime.slice(9, 11)}:${navitiaTime.slice(11, 13)}:${navitiaTime.slice(13, 15)}`;
-}
+  return `${navitiaTime.slice(0, 4)}-${navitiaTime.slice(4, 6)}-${navitiaTime.slice(6, 8)}T${navitiaTime.slice(9, 11)}:${navitiaTime.slice(11, 13)}:${navitiaTime.slice(13, 15)}`;
+};
 
 // ============================================================================
 // 🌦 MODULES DE DONNÉES PUBLIQUES (météo, saint, actu, vélib)
@@ -106,18 +108,28 @@ export const fetchVelibStation = (stationCode: string) =>
     `https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/velib-disponibilite-en-temps-reel/records?where=stationcode%3D${stationCode}&limit=1`
   );
 
+// RSS France Info (plus permissif que Le Monde)
 export const fetchNews = async () => {
-  const xml = await fetchText(RSS_URL);
-  if (!xml) return [];
   try {
+    const xml = await fetchText(RSS_URL);
+    if (!xml) {
+      return [{ title: "Actualités indisponibles", desc: "Source RSS non accessible (timeout ou 403)" }];
+    }
+    
     const doc = new DOMParser().parseFromString(xml, "application/xml");
-    const nodes = [...doc.querySelectorAll("item")].slice(0, 8);
+    const nodes = [...doc.querySelectorAll("item, entry")].slice(0, 8);
+    
+    if (!nodes.length) {
+      return [{ title: "Flux RSS vide", desc: "Aucune actualité trouvée dans le flux" }];
+    }
+    
     return nodes.map(n => ({
-      title: clean(n.querySelector("title")?.textContent || ""),
-      desc: clean(n.querySelector("description")?.textContent || "")
+      title: clean(n.querySelector("title")?.textContent || "Titre indisponible"),
+      desc: clean(n.querySelector("description, summary")?.textContent || "Description indisponible")
     }));
-  } catch {
-    return [];
+  } catch (e: any) {
+    console.warn('fetchNews failed:', e.message);
+    return [{ title: "Erreur actualités", desc: `Impossible de charger les actualités: ${e.message}` }];
   }
 };
 
@@ -152,17 +164,24 @@ export const fetchStopMonitoring = async (stopId: string): Promise<Visit[]> => {
   });
 };
 
+// GeneralMessage – tolérant aux 400, retourne [] avec log
 export const fetchTrafficMessages = async (lineRefs: string[]): Promise<string[]> => {
   const messages: string[] = [];
   for (const ref of lineRefs) {
-    const data = await fetchJSON<any>(PRIM_GM(ref));
-    const deliveries = data?.Siri?.ServiceDelivery?.GeneralMessageDelivery || [];
-    deliveries.forEach((d: any) => {
-      (d.InfoMessage || []).forEach((m: any) => {
-        const txt = clean(m?.Content?.Message?.[0]?.MessageText?.[0]?.value || "");
-        if (txt) messages.push(txt);
+    try {
+      const data = await fetchJSON<any>(PRIM_GM(ref));
+      if (!data) continue; // 400, 403, 429, etc.
+      
+      const deliveries = data?.Siri?.ServiceDelivery?.GeneralMessageDelivery || [];
+      deliveries.forEach((d: any) => {
+        (d.InfoMessage || []).forEach((m: any) => {
+          const txt = clean(m?.Content?.Message?.[0]?.MessageText?.[0]?.value || "");
+          if (txt) messages.push(txt);
+        });
       });
-    });
+    } catch (e: any) {
+      console.warn(`fetchTrafficMessages failed for ${ref}:`, e.message);
+    }
   }
   return messages;
 };
@@ -201,63 +220,112 @@ export const getMetaByCode = async (code: string): Promise<LineMeta> => {
 };
 
 // ============================================================================
-// 📅 GTFS FALLBACK – Horaires théoriques Navitia
+// 📅 GTFS FALLBACK – Horaires théoriques Navitia (via stop_points)
 // ============================================================================
 
-const siriToNavitiaStopArea = (siriId: string): string => {
+// CONVERSION SIRI -> Navitia
+const siriToNavitiaAreaId = (siriId: string): string => {
   const match = siriId.match(/SP:(\d+):/);
-  if (match && match[1]) {
-    return `stop_area:IDFM:${match[1]}`;
-  }
+  if (match && match[1]) return `stop_area:IDFM:${match[1]}`;
   return siriId;
 };
 
-export const getDailySchedule = async (lineId: string, siriStopId: string): Promise<{ first: string | null, last: string | null }> => {
-    try {
-        const navitiaStopId = siriToNavitiaStopArea(siriStopId);
-        const dayStart = ymdhm(startOfDay(new Date()));
-        const data = await fetchJSON<any>(NAVI_SCHEDULE(lineId, navitiaStopId, dayStart) + '&count=200');
-        const times = data?.stop_schedules?.[0]?.date_times;
-        if (Array.isArray(times) && times.length > 0) {
-            const first = navitiaTimeToISO(times[0].date_time);
-            const last = navitiaTimeToISO(times[times.length - 1].date_time);
-            return { first, last };
-        }
-    } catch (e: any) {
-        console.warn("getDailySchedule failed", e.message);
-    }
-    return { first: null, last: null };
+// Découverte stop_points dans une stop_area (pour éviter 404 sur stop_schedules)
+const discoverStopPointsInArea = async (navitiaAreaId: string): Promise<string[]> => {
+  try {
+    const data = await fetchJSON<any>(NAVI_STOP_POINTS(navitiaAreaId));
+    const pts = data?.stop_points || [];
+    return pts.map((p: any) => p.id).filter(Boolean);
+  } catch (e: any) {
+    console.warn('discoverStopPointsInArea failed:', e.message);
+    return [];
+  }
 };
 
-export const gtfsFallback = async (lineId: string, siriStopId: string): Promise<GtfsFallback | null> => {
+// Horaires journaliers via stop_points (plus fiable)
+export const getDailySchedule = async (lineId: string, siriStopId: string): Promise<{ first: string | null, last: string | null }> => {
   try {
-    const navitiaStopId = siriToNavitiaStopArea(siriStopId);
-    const now = new Date();
-    
-    const n1 = await fetchJSON<any>(NAVI_SCHEDULE(lineId, navitiaStopId, ymdhm(now)));
-    const next = n1?.stop_schedules?.[0]?.date_times?.[0]?.date_time;
-    if (next) {
-      const iso = navitiaTimeToISO(next);
-      return { status: "next", timeISO: iso };
-    }
+    const navArea = siriToNavitiaAreaId(siriStopId);
+    const stopPoints = await discoverStopPointsInArea(navArea);
+    if (!stopPoints.length) return { first: null, last: null };
 
-    const sod = startOfDay(now);
-    const n2 = await fetchJSON<any>(NAVI_SCHEDULE(lineId, navitiaStopId, ymdhm(sod)));
-    const firstToday = n2?.stop_schedules?.[0]?.date_times?.[0]?.date_time;
-    if (firstToday) {
-      const isoFirst = navitiaTimeToISO(firstToday);
-      if (new Date(isoFirst) > now) return { status: "first", timeISO: isoFirst };
-    }
+    const dayStart = ymdhm(startOfDay(new Date()));
 
-    const tomorrow = startOfDay(addDays(now, 1));
-    const n3 = await fetchJSON<any>(NAVI_SCHEDULE(lineId, navitiaStopId, ymdhm(tomorrow)));
-    const firstTom = n3?.stop_schedules?.[0]?.date_times?.[0]?.date_time;
-    if (firstTom) {
-      const isoTom = navitiaTimeToISO(firstTom);
-      return { status: "ended", timeISO: isoTom };
+    // Essayer les premiers stop_points pour limiter la charge
+    for (const sp of stopPoints.slice(0, 3)) {
+      try {
+        const data = await fetchJSON<any>(NAVI_SCHEDULE_SP(lineId, sp, dayStart));
+        const times = data?.stop_schedules?.[0]?.date_times;
+        if (Array.isArray(times) && times.length > 0) {
+          const first = navitiaTimeToISO(times[0].date_time);
+          const last = navitiaTimeToISO(times[times.length - 1].date_time);
+          return { first, last };
+        }
+      } catch (e: any) {
+        console.warn(`getDailySchedule failed for stop_point ${sp}:`, e.message);
+        continue;
+      }
     }
   } catch (e: any) {
-    console.warn("gtfsFallback failed", e.message);
+    console.warn('getDailySchedule failed:', e.message);
+  }
+  return { first: null, last: null };
+};
+
+// Fallback GTFS avec messages explicites
+export const gtfsFallback = async (lineId: string, siriStopId: string): Promise<GtfsFallback | null> => {
+  try {
+    const navArea = siriToNavitiaAreaId(siriStopId);
+    const stopPoints = await discoverStopPointsInArea(navArea);
+    if (!stopPoints.length) {
+      console.warn('gtfsFallback: no stop_points found for', siriStopId);
+      return null;
+    }
+
+    const now = new Date();
+    
+    // Chercher le prochain passage aujourd'hui
+    for (const sp of stopPoints.slice(0, 2)) {
+      try {
+        const n1 = await fetchJSON<any>(NAVI_SCHEDULE_SP(lineId, sp, ymdhm(now)));
+        const next = n1?.stop_schedules?.[0]?.date_times?.[0]?.date_time;
+        if (next) return { status: 'next', timeISO: navitiaTimeToISO(next) };
+      } catch (e: any) {
+        console.warn(`gtfsFallback next failed for ${sp}:`, e.message);
+        continue;
+      }
+    }
+
+    // Chercher le premier passage depuis le début de journée
+    const sod = startOfDay(now);
+    for (const sp of stopPoints.slice(0, 2)) {
+      try {
+        const n2 = await fetchJSON<any>(NAVI_SCHEDULE_SP(lineId, sp, ymdhm(sod)));
+        const firstToday = n2?.stop_schedules?.[0]?.date_times?.[0]?.date_time;
+        if (firstToday) {
+          const isoFirst = navitiaTimeToISO(firstToday);
+          if (new Date(isoFirst) > now) return { status: 'first', timeISO: isoFirst };
+        }
+      } catch (e: any) {
+        console.warn(`gtfsFallback first failed for ${sp}:`, e.message);
+        continue;
+      }
+    }
+
+    // Service terminé, chercher demain
+    const tomorrow = startOfDay(addDays(now, 1));
+    for (const sp of stopPoints.slice(0, 2)) {
+      try {
+        const n3 = await fetchJSON<any>(NAVI_SCHEDULE_SP(lineId, sp, ymdhm(tomorrow)));
+        const firstTom = n3?.stop_schedules?.[0]?.date_times?.[0]?.date_time;
+        if (firstTom) return { status: 'ended', timeISO: navitiaTimeToISO(firstTom) };
+      } catch (e: any) {
+        console.warn(`gtfsFallback tomorrow failed for ${sp}:`, e.message);
+        continue;
+      }
+    }
+  } catch (e: any) {
+    console.warn('gtfsFallback failed:', e.message);
   }
   return null;
 };
@@ -321,63 +389,70 @@ export const discoverBusLines = async (stopAreaId: string) => {
     .filter((l: any) => l.lineId);
 };
 
+// Séquencement des appels pour éviter 429
 export const fetchAllBusesSummary = async (navitiaStopAreaId: string, siriStopId: string, perDir: number = 3): Promise<BusSummary[]> => {
+  try {
     const discoveredLines = await discoverBusLines(navitiaStopAreaId);
     if (!discoveredLines.length) return [];
     
     const lineMetaMap = new Map<string, any>(discoveredLines.map(l => [l.lineId, l]));
 
-    const plannedSchedulesPromises = discoveredLines.map(line => 
-        getDailySchedule(line.lineId, siriStopId)
-    );
+    // Séquencer les appels pour éviter 429
+    const plannedSchedules: Array<{ first: string | null; last: string | null; }> = [];
+    for (const line of discoveredLines) {
+      const schedule = await getDailySchedule(line.lineId, siriStopId);
+      plannedSchedules.push(schedule);
+      await wait(100); // Petite pause entre appels
+    }
     
-    const [plannedSchedules, realtimeVisits] = await Promise.all([
-        Promise.all(plannedSchedulesPromises),
-        fetchStopMonitoring(siriStopId)
-    ]);
-    
+    const realtimeVisits = await fetchStopMonitoring(siriStopId);
+
     const plannedSchedulesMap = new Map<string, { first: string | null; last: string | null; }>();
     discoveredLines.forEach((line, index) => {
-        plannedSchedulesMap.set(line.lineId, plannedSchedules[index]);
+      plannedSchedulesMap.set(line.lineId, plannedSchedules[index]);
     });
 
     const byKey = new Map<string, { lineId: string; dest: string; list: Visit[] }>();
     realtimeVisits.forEach(v => {
-        if (!v.lineId || !lineMetaMap.has(v.lineId)) return;
-        const key = v.lineId + "|" + v.dest.toLowerCase();
-        if (!byKey.has(key)) byKey.set(key, { lineId: v.lineId, dest: v.dest, list: [] });
-        if (v.minutes !== null) byKey.get(key)!.list.push(v);
+      if (!v.lineId || !lineMetaMap.has(v.lineId)) return;
+      const key = v.lineId + "|" + v.dest.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, { lineId: v.lineId, dest: v.dest, list: [] });
+      if (v.minutes !== null) byKey.get(key)!.list.push(v);
     });
 
     const byLine = new Map<string, { lineId: string; dirs: Direction[] }>();
     for (const g of byKey.values()) {
-        if (!byLine.has(g.lineId)) byLine.set(g.lineId, { lineId: g.lineId, dirs: [] });
-        byLine.get(g.lineId)!.dirs.push({
-            dest: g.dest,
-            list: g.list.sort((a, b) => a.minutes! - b.minutes!).slice(0, perDir)
-        });
+      if (!byLine.has(g.lineId)) byLine.set(g.lineId, { lineId: g.lineId, dirs: [] });
+      byLine.get(g.lineId)!.dirs.push({
+        dest: g.dest,
+        list: g.list.sort((a, b) => a.minutes! - b.minutes!).slice(0, perDir)
+      });
     }
 
     const summary: BusSummary[] = discoveredLines.map(lineInfo => {
-        const lineId = lineInfo.lineId;
-        const lineGroup = byLine.get(lineId);
-        const planned = plannedSchedulesMap.get(lineId) || { first: null, last: null };
+      const lineId = lineInfo.lineId;
+      const lineGroup = byLine.get(lineId);
+      const planned = plannedSchedulesMap.get(lineId) || { first: null, last: null };
 
-        return {
-            meta: {
-                code: lineInfo.code,
-                name: lineInfo.name,
-                color: `#${lineInfo.color}`,
-                text: '#ffffff',
-            },
-            planned: {
-                first: planned.first,
-                last: planned.last,
-            },
-            directions: lineGroup?.dirs || [],
-        };
+      return {
+        meta: {
+          code: lineInfo.code,
+          name: lineInfo.name,
+          color: `#${lineInfo.color}`,
+          text: '#ffffff',
+        },
+        planned: {
+          first: planned.first,
+          last: planned.last,
+        },
+        directions: lineGroup?.dirs || [],
+      };
     });
 
     summary.sort((a, b) => (a.meta.code || '').localeCompare(b.meta.code || '', 'fr', { numeric: true }));
     return summary;
+  } catch (e: any) {
+    console.warn('fetchAllBusesSummary failed:', e.message);
+    return [];
+  }
 };
