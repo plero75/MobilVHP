@@ -41,17 +41,13 @@ async function fetchAPI(url, timeout=15000){
   const timer = setTimeout(()=>controller.abort(), timeout); 
   try{ 
     const finalUrl = /^https?:\/\//.test(url) ? toProxied(url) : url;
-    console.log('Fetching proxified URL:', finalUrl);
     const r = await fetch(finalUrl, { signal: controller.signal }); 
     clearTimeout(timer); 
     if(!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`); 
     const ct = r.headers.get('content-type') || ''; 
-    const result = ct.includes('application/json') ? await r.json() : await r.text();
-    console.log('API Response for', url, ':', result);
-    return result;
+    return ct.includes('application/json') ? await r.json() : await r.text();
   } catch(e){ 
     clearTimeout(timer); 
-    console.error('fetchAPI failed:',url,e.message); 
     banner(`Erreur API: ${e.message}`); 
     return null; 
   }
@@ -106,36 +102,25 @@ async function loadTrafficMessages(){
 
 async function fetchStopData(stopId){ 
   const d=await fetchAPI(APIS.PRIM_STOP(stopId)); 
-  if (!d || !d.Siri) {
-    console.warn('No SIRI data received for stop:', stopId);
-    return [];
-  }
+  if (!d || !d.Siri) return [];
   const vs=d?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0]?.MonitoredStopVisit||[]; 
-  console.log(`Found ${vs.length} vehicles for stop ${stopId}`);
-  
   return vs.map(v=>{ 
     const mv=v.MonitoredVehicleJourney||{}; 
     const call=mv.MonitoredCall||{}; 
     const lineRef=mv.LineRef?.value||mv.LineRef||''; 
-    
-    // Extraire correctement le code de ligne depuis PRIM: STIF:Line::C01399: -> C01399
     const lineMatch = lineRef.match(/STIF:Line::([^:]+):/);
     const lineId = lineMatch ? lineMatch[1] : lineRef;
-    
     const dest=clean(call.DestinationDisplay?.[0]?.value||''); 
     const expected=call.ExpectedDepartureTime||call.ExpectedArrivalTime||null; 
     const aimed=call.AimedDepartureTime||call.AimedArrivalTime||null; 
     const minutes=minutesFromISO(expected); 
-    
     let delayMin=null; 
     if(expected&&aimed){ 
       const d=Math.round((new Date(expected)-new Date(aimed))/60000); 
       if(Number.isFinite(d)&&d>0) delayMin=d; 
     } 
-    
     const cancelled=/cancel|annul|supprim/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); 
     const atStop=/at.stop|quai|imminent/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); 
-    
     return { 
       lineId,
       dest,
@@ -166,21 +151,17 @@ function renderHorizontalTimes(trips){
 
 function renderBoard(container, groups){ 
   if (!container) return; 
-  
   groups=[...groups].sort((a,b)=>{ 
     if(a.lineId==='A'&&b.lineId!=='A') return -1; 
     if(a.lineId!=='A'&&b.lineId==='A') return 1; 
     if(a.lineId===b.lineId) return (a.direction||'').localeCompare(b.direction||''); 
     return (''+a.lineId).localeCompare(''+b.lineId,'fr',{numeric:true}); 
   }); 
-  
   container.innerHTML=''; 
-  
   if(!groups.length) {
     container.appendChild(el('div','group', '<div class="row"><div class="info"><div class="dest">Aucune donnée transport disponible</div></div></div>'));
     return;
   }
-  
   groups.forEach(g=>{ 
     const group=el('div','group'); 
     const head=el('div','group-head'); 
@@ -189,7 +170,6 @@ function renderBoard(container, groups){
     const dir=el('div','dir', g.direction || g.dest || ''); 
     head.append(pill,dir); 
     group.appendChild(head); 
-    
     const block=el('div','row'); 
     block.innerHTML = renderHorizontalTimes(g.trips||[]); 
     group.appendChild(block); 
@@ -231,22 +211,14 @@ const STATIC_LINES={
 
 async function loadTransportData(){ 
   await loadHorizontalHelper(); 
-  console.log('Loading transport data...');
-  
   const [joinvilleData, hippoData, breuilData] = await Promise.all([ 
     fetchStopData(STOP_IDS.JOINVILLE_RER), 
     fetchStopData(STOP_IDS.HIPPODROME), 
     fetchStopData(STOP_IDS.BREUIL) 
   ]); 
-  
-  console.log('Transport data loaded:', {joinvilleData, hippoData, breuilData});
-  
   function mergeStaticWithRealtime(staticLines, realTimeData) { 
     return staticLines.map(st => { 
-      // Comparer le cCode statique avec le lineId extrait de PRIM
       const liveTrips = realTimeData.filter(v => v.lineId === st.cCode);
-      console.log(`Line ${st.lineId} (${st.cCode}): found ${liveTrips.length} live trips`);
-      
       if(liveTrips.length > 0) { 
         return { 
           ...st, 
@@ -262,9 +234,7 @@ async function loadTransportData(){
           hasRealTimeData: true 
         }; 
       } else { 
-        // Fallback systématique sur théorique si pas de données temps réel
         const theoretical = generateTheoretical(st.lineId); 
-        console.log(`Using theoretical data for line ${st.lineId}: ${theoretical.length} trips`);
         return { 
           ...st, 
           trips: theoretical.slice(0, 3).map(th => ({ 
@@ -281,65 +251,22 @@ async function loadTransportData(){
       } 
     }); 
   } 
-  
   const rerGroups = mergeStaticWithRealtime(STATIC_LINES['rer-a'], joinvilleData); 
   renderBoard(qs('#board-rer-a'), rerGroups); 
-  
   const joinvilleBusGroups = mergeStaticWithRealtime(STATIC_LINES['joinville-bus'], joinvilleData); 
   renderBoard(qs('#board-joinville-bus'), joinvilleBusGroups); 
-  
   const hippoGroups = mergeStaticWithRealtime(STATIC_LINES['hippodrome'], hippoData); 
   renderBoard(qs('#board-hippodrome'), hippoGroups); 
-  
   const breuilGroups = mergeStaticWithRealtime(STATIC_LINES['breuil'], breuilData); 
   renderBoard(qs('#board-breuil'), breuilGroups); 
 }
 
-// Génération d'horaires théoriques
-function generateTheoretical(lineId, now=new Date()){ 
-  const base=now.getTime(); 
-  const freq={'A':4,'77':6,'201':8,'101':12,'106':10,'108':9,'110':11,'112':15,'111':13,'281':18,'317':20,'N33':30}[lineId]||10; 
-  const trips=[]; 
-  
-  for(let i=0;i<6;i++){ 
-    const offset=freq*i*60*1000 + (Math.random()-0.5)*120*1000; 
-    if(offset>2*60*60*1000) break; 
-    const aimedTime=new Date(base+offset); 
-    trips.push({ 
-      aimed: aimedTime.toISOString(), 
-      aimedTime: aimedTime.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}), 
-      waitMin: Math.round(offset/60000), 
-      dest: getDestination(lineId, i) 
-    }); 
-  } 
-  
-  return trips.filter(t=>t.waitMin>=0&&t.waitMin<=120); 
-}
-
-function getDestination(lineId, index){ 
-  const map={
-    'A': index%2?'Boissy-Saint-Léger':'La Défense - Châtelet',
-    '77': index%2?'Joinville RER':'Plateau de Gravelle',
-    '201': index%2?'Champigny la Plage':'Porte Dorée',
-    '101':'Château de Vincennes',
-    '106':'Créteil Université',
-    '108':'Maisons-Alfort',
-    '110':'Créteil Préfecture',
-    '112':'École du Breuil',
-    '111':'République',
-    '281':'Torcy RER',
-    '317':'Val-de-Fontenay',
-    'N33':'Château de Vincennes'
-  }; 
-  return map[lineId]||`Terminus ${lineId}`; 
-}
-
 async function loadNews(){ 
   const xml=await fetchAPI(APIS.RSS); 
-  if(!xml) return qs('#news').textContent='Actualités indisponibles'; 
+  if(!xml) return qs('#news').textContent="Actualités indisponibles"; 
   const doc=new DOMParser().parseFromString(xml,'application/xml'); 
   const nodes=[...doc.querySelectorAll('item')].slice(0,6); 
-  qs('#news').innerHTML=nodes.length? nodes.map(n=>`<div class="news-item"><strong>${clean(n.querySelector('title')?.textContent||'')}</strong></div>`).join('') : 'Aucune actualité'; 
+  qs('#news').innerHTML=nodes.length? nodes.map(n=>`<div class=\"news-item\"><strong>${clean(n.querySelector('title')?.textContent||'')}</strong></div>`).join('') : 'Aucune actualité'; 
 }
 
 async function loadVelib(){ 
@@ -364,8 +291,8 @@ async function loadCourses(){
       if(ts>Date.now()) list.push(`<strong>${new Date(ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</strong> - ${c.libelle||'Course'} (${c.numOrdre?`C${c.numOrdre}`:''})`); 
     }); 
   }); 
-  qs('#races-vincennes').innerHTML=vin.length? vin.join('<br>') :'Aucune course aujourd\\'hui'; 
-  qs('#races-enghien').innerHTML=eng.length? eng.join('<br>') :'Aucune course aujourd\\'hui'; 
+  qs('#races-vincennes').innerHTML=vin.length? vin.join('<br>') : "Aucune course aujourd'hui"; 
+  qs('#races-enghien').innerHTML=eng.length? eng.join('<br>') : "Aucune course aujourd'hui"; 
 }
 
 let pollInterval=60_000; 
@@ -384,13 +311,48 @@ function scheduleTransportRefresh(){
   }, pollInterval); 
 }
 
+// Génération d'horaires théoriques
+function generateTheoretical(lineId, now=new Date()){ 
+  const base=now.getTime(); 
+  const freq={'A':4,'77':6,'201':8,'101':12,'106':10,'108':9,'110':11,'112':15,'111':13,'281':18,'317':20,'N33':30}[lineId]||10; 
+  const trips=[]; 
+  for(let i=0;i<6;i++){ 
+    const offset=freq*i*60*1000 + (Math.random()-0.5)*120*1000; 
+    if(offset>2*60*60*1000) break; 
+    const aimedTime=new Date(base+offset); 
+    trips.push({ 
+      aimed: aimedTime.toISOString(), 
+      aimedTime: aimedTime.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}), 
+      waitMin: Math.round(offset/60000), 
+      dest: getDestination(lineId, i) 
+    }); 
+  } 
+  return trips.filter(t=>t.waitMin>=0&&t.waitMin<=120); 
+}
+
+function getDestination(lineId, index){ 
+  const map={
+    'A': index%2?'Boissy-Saint-Léger':'La Défense - Châtelet',
+    '77': index%2?'Joinville RER':'Plateau de Gravelle',
+    '201': index%2?'Champigny la Plage':'Porte Dorée',
+    '101':'Château de Vincennes',
+    '106':'Créteil Université',
+    '108':'Maisons-Alfort',
+    '110':'Créteil Préfecture',
+    '112':'École du Breuil',
+    '111':'République',
+    '281':'Torcy RER',
+    '317':'Val-de-Fontenay',
+    'N33':'Château de Vincennes'
+  }; 
+  return map[lineId]||`Terminus ${lineId}`; 
+}
+
 async function init(){ 
-  console.log('Initializing dashboard with Cloudflare Workers proxy...');
   setClock(); 
   setInterval(setClock,30_000); 
   adaptPolling(); 
   setInterval(adaptPolling, 10*60_000); 
-  
   await Promise.allSettled([ 
     loadWeather(),
     loadSaint(),
@@ -400,7 +362,6 @@ async function init(){
     loadVelib(),
     loadCourses() 
   ]); 
-  
   scheduleTransportRefresh(); 
   setInterval(loadTrafficMessages, 300_000); 
   setInterval(()=>Promise.allSettled([loadNews(),loadVelib(),loadCourses()]), 600_000); 
