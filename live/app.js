@@ -2,18 +2,14 @@
    Dashboard Hippodrome – Panneau public IDFM complet (horizontal times)
    =============================== */
 
-// Utiliser un proxy CORS plus fiable
-const PROXY = "https://cors-anywhere.herokuapp.com/";
-// Alternative: const PROXY = "https://api.allorigins.win/raw?url=";
+// Utiliser UNIQUEMENT votre proxy Cloudflare Workers
+const PROXY = "https://ratp-proxy.hippodrome-proxy42.workers.dev/?url=";
 
 const APIS = {
   WEATHER: "https://api.open-meteo.com/v1/forecast?latitude=48.83&longitude=2.42&current_weather=true",
   SAINT: "https://nominis.cef.fr/json/nominis.php",
   RSS: "https://www.francetvinfo.fr/titres.rss",
-  PRIM_STOP: (stopId, lineCode) => {
-    const base = `https://prim.iledefrance-mobilites.fr/marketplace/stop-monitoring?MonitoringRef=${stopId}`;
-    return lineCode ? `${base}&LineRef=STIF:Line::${lineCode}:` : base;
-  },
+  PRIM_STOP: (stopId) => `https://prim.iledefrance-mobilites.fr/marketplace/stop-monitoring?MonitoringRef=${stopId}`,
   PRIM_GM: (cCode) => `https://prim.iledefrance-mobilites.fr/marketplace/general-message?LineRef=STIF:Line::${cCode}:`,
   PMU: (day) => `https://offline.turfinfo.api.pmu.fr/rest/client/7/programme/${day}`,
   VELIB: (station) => `https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/velib-disponibilite-en-temps-reel/records?where=stationcode%3D${station}&limit=1`
@@ -28,25 +24,35 @@ const STOP_IDS = {
 const qs = (s, el=document) => el.querySelector(s);
 const el = (tag, cls, html) => { const n=document.createElement(tag); if(cls) n.className=cls; if(html!=null) n.innerHTML=html; return n; };
 
-function banner(msg){ const host=document.getElementById('prim-messages'); if(!host) return; host.prepend(el('div','message critical', msg)); }
+function banner(msg){ 
+  const host=document.getElementById('prim-messages'); 
+  if(!host) return; 
+  host.prepend(el('div','message critical', msg)); 
+}
+
+// Fonction pour proxifier une URL - évite le double-proxy
+function toProxied(url){
+  if (url.startsWith(PROXY)) return url;
+  return PROXY + encodeURIComponent(url);
+}
 
 async function fetchAPI(url, timeout=15000){ 
-  const c=new AbortController(); 
-  const t=setTimeout(()=>c.abort(),timeout); 
+  const controller = new AbortController(); 
+  const timer = setTimeout(()=>controller.abort(), timeout); 
   try{ 
-    const proxyUrl = url.startsWith('http') ? PROXY + encodeURIComponent(url) : url;
-    console.log('Fetching:', proxyUrl); // Debug log
-    const r=await fetch(proxyUrl,{signal:c.signal}); 
-    clearTimeout(t); 
+    const finalUrl = /^https?:\/\//.test(url) ? toProxied(url) : url;
+    console.log('Fetching proxified URL:', finalUrl);
+    const r = await fetch(finalUrl, { signal: controller.signal }); 
+    clearTimeout(timer); 
     if(!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`); 
-    const ct=r.headers.get('content-type')||''; 
-    const result = ct.includes('application/json')? await r.json(): await r.text();
-    console.log('API Response for', url, ':', result); // Debug log
+    const ct = r.headers.get('content-type') || ''; 
+    const result = ct.includes('application/json') ? await r.json() : await r.text();
+    console.log('API Response for', url, ':', result);
     return result;
-  }catch(e){ 
-    clearTimeout(t); 
+  } catch(e){ 
+    clearTimeout(timer); 
     console.error('fetchAPI failed:',url,e.message); 
-    banner(`Erreur API: ${e.message} (${url})`); 
+    banner(`Erreur API: ${e.message}`); 
     return null; 
   }
 }
@@ -60,10 +66,22 @@ const COLORS={
 };
 const colorFor=(g)=> COLORS.lines[g.lineId]||COLORS.modes[g.mode]||'#0055c3';
 
-function setClock(){ const d=new Date(); qs('#datetime').textContent=`${d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})} – ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`; }
+function setClock(){ 
+  const d=new Date(); 
+  qs('#datetime').textContent=`${d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})} – ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`; 
+}
 
-async function loadWeather(){ const d=await fetchAPI(APIS.WEATHER); const t=d?.current_weather?.temperature; qs('#weather').textContent=Number.isFinite(t)? `${Math.round(t)}°C`:'–'; }
-async function loadSaint(){ const d=await fetchAPI(APIS.SAINT); const p=d?.response?.prenom||d?.response?.prenoms?.[0]; qs('#saint').textContent=p? `Saint ${p}`:'Saint du jour'; }
+async function loadWeather(){ 
+  const d=await fetchAPI(APIS.WEATHER); 
+  const t=d?.current_weather?.temperature; 
+  qs('#weather').textContent=Number.isFinite(t)? `${Math.round(t)}°C`:'–'; 
+}
+
+async function loadSaint(){ 
+  const d=await fetchAPI(APIS.SAINT); 
+  const p=d?.response?.prenom||d?.response?.prenoms?.[0]; 
+  qs('#saint').textContent=p? `Saint ${p}`:'Saint du jour'; 
+}
 
 async function loadTrafficMessages(){ 
   const lines=[{label:'RER A',code:'C01742'},{label:'Bus 77',code:'C01399'},{label:'Bus 201',code:'C01219'}]; 
@@ -86,33 +104,38 @@ async function loadTrafficMessages(){
   } 
 }
 
-async function fetchStopData(stopId, lineCode = null){ 
-  const url = lineCode ? APIS.PRIM_STOP(stopId, lineCode) : APIS.PRIM_STOP(stopId);
-  const d=await fetchAPI(url); 
+async function fetchStopData(stopId){ 
+  const d=await fetchAPI(APIS.PRIM_STOP(stopId)); 
   if (!d || !d.Siri) {
     console.warn('No SIRI data received for stop:', stopId);
     return [];
   }
   const vs=d?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0]?.MonitoredStopVisit||[]; 
   console.log(`Found ${vs.length} vehicles for stop ${stopId}`);
+  
   return vs.map(v=>{ 
     const mv=v.MonitoredVehicleJourney||{}; 
     const call=mv.MonitoredCall||{}; 
     const lineRef=mv.LineRef?.value||mv.LineRef||''; 
-    // Extraire l'ID de ligne correctement
+    
+    // Extraire correctement le code de ligne depuis PRIM: STIF:Line::C01399: -> C01399
     const lineMatch = lineRef.match(/STIF:Line::([^:]+):/);
     const lineId = lineMatch ? lineMatch[1] : lineRef;
+    
     const dest=clean(call.DestinationDisplay?.[0]?.value||''); 
     const expected=call.ExpectedDepartureTime||call.ExpectedArrivalTime||null; 
     const aimed=call.AimedDepartureTime||call.AimedArrivalTime||null; 
     const minutes=minutesFromISO(expected); 
+    
     let delayMin=null; 
     if(expected&&aimed){ 
       const d=Math.round((new Date(expected)-new Date(aimed))/60000); 
       if(Number.isFinite(d)&&d>0) delayMin=d; 
     } 
+    
     const cancelled=/cancel|annul|supprim/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); 
     const atStop=/at.stop|quai|imminent/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); 
+    
     return { 
       lineId,
       dest,
@@ -124,7 +147,7 @@ async function fetchStopData(stopId, lineCode = null){
       atStop,
       timeStr: expected? new Date(expected).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'' 
     }; 
-  }).filter(trip => trip.minutes !== null && trip.minutes >= 0); // Filtrer les horaires invalides
+  }).filter(trip => trip.minutes !== null && trip.minutes >= 0);
 }
 
 // Import helper horizontal
@@ -143,17 +166,21 @@ function renderHorizontalTimes(trips){
 
 function renderBoard(container, groups){ 
   if (!container) return; 
+  
   groups=[...groups].sort((a,b)=>{ 
     if(a.lineId==='A'&&b.lineId!=='A') return -1; 
     if(a.lineId!=='A'&&b.lineId==='A') return 1; 
     if(a.lineId===b.lineId) return (a.direction||'').localeCompare(b.direction||''); 
     return (''+a.lineId).localeCompare(''+b.lineId,'fr',{numeric:true}); 
   }); 
+  
   container.innerHTML=''; 
+  
   if(!groups.length) {
     container.appendChild(el('div','group', '<div class="row"><div class="info"><div class="dest">Aucune donnée transport disponible</div></div></div>'));
     return;
   }
+  
   groups.forEach(g=>{ 
     const group=el('div','group'); 
     const head=el('div','group-head'); 
@@ -162,6 +189,7 @@ function renderBoard(container, groups){
     const dir=el('div','dir', g.direction || g.dest || ''); 
     head.append(pill,dir); 
     group.appendChild(head); 
+    
     const block=el('div','row'); 
     block.innerHTML = renderHorizontalTimes(g.trips||[]); 
     group.appendChild(block); 
@@ -169,7 +197,7 @@ function renderBoard(container, groups){
   }); 
 }
 
-// LIGNES PAR ARRÊT avec codes corrigés
+// LIGNES PAR ARRÊT avec codes cCode corrects
 const STATIC_LINES={ 
   'rer-a': [
     {lineId:'A',mode:'rer-a',direction:'Vers Paris / La Défense', cCode:'C01742'}, 
@@ -215,6 +243,7 @@ async function loadTransportData(){
   
   function mergeStaticWithRealtime(staticLines, realTimeData) { 
     return staticLines.map(st => { 
+      // Comparer le cCode statique avec le lineId extrait de PRIM
       const liveTrips = realTimeData.filter(v => v.lineId === st.cCode);
       console.log(`Line ${st.lineId} (${st.cCode}): found ${liveTrips.length} live trips`);
       
@@ -233,7 +262,9 @@ async function loadTransportData(){
           hasRealTimeData: true 
         }; 
       } else { 
+        // Fallback systématique sur théorique si pas de données temps réel
         const theoretical = generateTheoretical(st.lineId); 
+        console.log(`Using theoretical data for line ${st.lineId}: ${theoretical.length} trips`);
         return { 
           ...st, 
           trips: theoretical.slice(0, 3).map(th => ({ 
@@ -264,11 +295,12 @@ async function loadTransportData(){
   renderBoard(qs('#board-breuil'), breuilGroups); 
 }
 
-// Théorique
+// Génération d'horaires théoriques
 function generateTheoretical(lineId, now=new Date()){ 
   const base=now.getTime(); 
   const freq={'A':4,'77':6,'201':8,'101':12,'106':10,'108':9,'110':11,'112':15,'111':13,'281':18,'317':20,'N33':30}[lineId]||10; 
   const trips=[]; 
+  
   for(let i=0;i<6;i++){ 
     const offset=freq*i*60*1000 + (Math.random()-0.5)*120*1000; 
     if(offset>2*60*60*1000) break; 
@@ -280,6 +312,7 @@ function generateTheoretical(lineId, now=new Date()){
       dest: getDestination(lineId, i) 
     }); 
   } 
+  
   return trips.filter(t=>t.waitMin>=0&&t.waitMin<=120); 
 }
 
@@ -331,8 +364,8 @@ async function loadCourses(){
       if(ts>Date.now()) list.push(`<strong>${new Date(ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</strong> - ${c.libelle||'Course'} (${c.numOrdre?`C${c.numOrdre}`:''})`); 
     }); 
   }); 
-  qs('#races-vincennes').innerHTML=vin.length? vin.join('<br>') :'Aucune course aujourd\'hui'; 
-  qs('#races-enghien').innerHTML=eng.length? eng.join('<br>') :'Aucune course aujourd\'hui'; 
+  qs('#races-vincennes').innerHTML=vin.length? vin.join('<br>') :'Aucune course aujourd\\'hui'; 
+  qs('#races-enghien').innerHTML=eng.length? eng.join('<br>') :'Aucune course aujourd\\'hui'; 
 }
 
 let pollInterval=60_000; 
@@ -352,7 +385,7 @@ function scheduleTransportRefresh(){
 }
 
 async function init(){ 
-  console.log('Initializing dashboard...');
+  console.log('Initializing dashboard with Cloudflare Workers proxy...');
   setClock(); 
   setInterval(setClock,30_000); 
   adaptPolling(); 
