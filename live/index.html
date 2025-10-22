@@ -9,10 +9,7 @@
 </head>
 <body>
   <header class="header-main">
-    <div class="header-left">
-      <div class="brand"><span class="brand-badge">LIVE</span><strong>Hippodrome Paris‑Vincennes</strong></div>
-      <div class="datetime" id="datetime">—</div>
-    </div>
+    <div class="header-left"><div class="brand"><span class="brand-badge">LIVE</span><strong>Hippodrome Paris‑Vincennes</strong></div><div class="datetime" id="datetime">—</div></div>
     <div class="header-right"><div class="saint" id="saint">—</div><div class="weather" id="weather">—</div></div>
   </header>
 
@@ -27,9 +24,7 @@
     </div>
 
     <div class="info-section">
-      <div class="info-panel traffic-panel"><h2>🗺️ Trafic routier</h2><div class="traffic-content">
-        <iframe src="https://www.viamichelin.fr/cartes-plans/trafic/france/ile_de_france/val_de_marne/vincennes-94300" width="100%" height="300" frameborder="0" title="Carte trafic"></iframe>
-      </div></div>
+      <div class="info-panel traffic-panel"><h2>🗺️ Trafic routier</h2><div class="traffic-content" id="traffic">Résumé trafic IDFM chargé ci‑dessus.</div></div>
       <div class="info-panel races-panel"><h2>🏇 Prochaines courses</h2><div class="races-content"><div class="race-venue"><h3>Vincennes</h3><div id="races-vincennes">Chargement...</div></div><div class="race-venue"><h3>Enghien</h3><div id="races-enghien">Chargement...</div></div></div></div>
       <div class="info-panel velib-panel"><h2>🚲 Vélib'</h2><div class="velib-content"><div class="velib-station"><h3>Hippodrome Vincennes</h3><div id="velib-vincennes">—</div></div><div class="velib-station"><h3>École du Breuil</h3><div id="velib-breuil">—</div></div></div></div>
       <div class="info-panel news-panel"><h2>📰 Flash News — France Info</h2><div id="news">Chargement...</div></div>
@@ -38,6 +33,7 @@
 
   <script src="partials/horizontal-timeline.js"></script>
   <script src="partials/fallback-renderer.js"></script>
+  <script src="partials/override-render.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
