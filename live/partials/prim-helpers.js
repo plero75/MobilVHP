@@ -1,10 +1,10 @@
 // PRIM query helpers with LineRef filtering
-export function primStopUrl(stopId, lineCode){
+function primStopUrl(stopId, lineCode){
   const base = `https://prim.iledefrance-mobilites.fr/marketplace/stop-monitoring?MonitoringRef=${encodeURIComponent(stopId)}`;
   return lineCode ? `${base}&LineRef=STIF:Line::${lineCode}:` : base;
 }
 
-export function mergeRealtimeOrTheory(staticLines, realTimeData, theoreticalFn){
+function mergeRealtimeOrTheory(staticLines, realTimeData, theoreticalFn){
   return staticLines.map(st => {
     const liveTrips = realTimeData.filter(v => v.lineId === st.cCode);
     if (liveTrips.length){
@@ -16,3 +16,7 @@ export function mergeRealtimeOrTheory(staticLines, realTimeData, theoreticalFn){
     return { ...st, trips: th, hasRealTimeData:false };
   });
 }
+
+// Rendre les fonctions disponibles globalement
+window.primStopUrl = primStopUrl;
+window.mergeRealtimeOrTheory = mergeRealtimeOrTheory;
