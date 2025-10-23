@@ -14,7 +14,25 @@ const APIS = {
   VELIB: (station) => `https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/velib-disponibilite-en-temps-reel/records?where=stationcode%3D${station}&limit=1`
 };
 
-const STOP_IDS = { JOINVILLE_RER: "STIF:StopArea:SP:43135:", HIPPODROME: "STIF:StopArea:SP:463641:", BREUIL: "STIF:StopArea:SP:463644:" };
+// Multi-IDs per area: try StopArea first, then StopPoint quays
+const STOP_IDS = {
+  JOINVILLE_RER: [
+    "STIF:StopArea:SP:43135:",
+    "STIF:StopPoint:Q:4313501:",
+    "STIF:StopPoint:Q:4313502:"
+  ],
+  HIPPODROME: [
+    "STIF:StopArea:SP:42121:",
+    "STIF:StopArea:SP:463641:",
+    "STIF:StopPoint:Q:4212101:",
+    "STIF:StopPoint:Q:4212102:"
+  ],
+  BREUIL: [
+    "STIF:StopArea:SP:43802:",
+    "STIF:StopArea:SP:463644:",
+    "STIF:StopPoint:Q:4380201:"
+  ]
+};
 
 const LINE_CODES={'77':'C01399','201':'C01219','A':'C01742','101':'C01260','106':'C01371','108':'C01374','110':'C01376','112':'C01379','111':'C01377','281':'C01521','317':'C01693','N33':'C01833'};
 
@@ -51,7 +69,19 @@ async function loadNews(){ const xml=await fetchAPI(APIS.RSS); if(!xml) return q
 
 async function loadTrafficMessages(){ const lines=[{label:'RER A',code:'C01742'},{label:'Bus 77',code:'C01399'},{label:'Bus 201',code:'C01219'}]; const out=[]; for(const {label,code} of lines){ const d=await fetchAPI(APIS.PRIM_GM(code)); if(!d?.Siri?.ServiceDelivery) continue; const dels=d.Siri.ServiceDelivery.GeneralMessageDelivery||[]; dels.forEach(x=> (x.InfoMessage||[]).forEach(m=>{ const txt=clean(m?.Content?.Message?.[0]?.MessageText?.[0]?.value||""); if(txt) out.push({label,txt,sev:m?.Content?.Severity||'info'}); })); } const box=qs('#prim-messages'); box.innerHTML=''; if(!out.length) { box.appendChild(el('div','message info', '✅ Aucune perturbation signalée sur le réseau')); } else { out.slice(0,3).forEach(i=> box.appendChild(el('div',`message ${i.sev}`, `<strong>${i.label}:</strong> ${i.txt}`))); } }
 
-async function fetchStopData(stopId){ const d=await fetchAPI(APIS.PRIM_STOP(stopId)); const vs=d?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0]?.MonitoredStopVisit||[]; return vs.map(v=>{ const mv=v.MonitoredVehicleJourney||{}; const call=mv.MonitoredCall||{}; const lineRef=mv.LineRef?.value||mv.LineRef||''; const m=lineRef.match(/STIF:Line::([^:]+):/); let lineId=m?m[1]:lineRef; if(lineId && !/^C\d{5}$/.test(lineId) && LINE_CODES[lineId]) lineId=LINE_CODES[lineId]; const dest=clean(call.DestinationDisplay?.[0]?.value||''); const expected=call.ExpectedDepartureTime||call.ExpectedArrivalTime||null; const aimed=call.AimedDepartureTime||call.AimedArrivalTime||null; const minutes=minutesFromISO(expected); let delayMin=null; if(expected&&aimed){ const d=Math.round((new Date(expected)-new Date(aimed))/60000); if(Number.isFinite(d)&&d>0) delayMin=d; } const cancelled=/cancel|annul|supprim/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); const atStop=/at.stop|quai|imminent/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); return { lineId,dest,expected,aimed,minutes,delayMin,cancelled,atStop,timeStr: expected? new Date(expected).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'' }; }).filter(trip => trip.minutes !== null && trip.minutes >= 0); }
+// Try multiple stop IDs for each area until one returns data
+async function fetchStopDataForAny(stopIdList){
+  for(const stopId of stopIdList){
+    const d=await fetchAPI(APIS.PRIM_STOP(stopId));
+    const vs=d?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0]?.MonitoredStopVisit;
+    if(vs && vs.length){
+      console.log(`Using stop ID: ${stopId} (${vs.length} visits)`);
+      return vs.map(v=>{ const mv=v.MonitoredVehicleJourney||{}; const call=mv.MonitoredCall||{}; const lineRef=mv.LineRef?.value||mv.LineRef||''; const m=lineRef.match(/STIF:Line::([^:]+):/); let lineId=m?m[1]:lineRef; if(lineId && !/^C\d{5}$/.test(lineId) && LINE_CODES[lineId]) lineId=LINE_CODES[lineId]; const dest=clean(call.DestinationDisplay?.[0]?.value||''); const expected=call.ExpectedDepartureTime||call.ExpectedArrivalTime||null; const aimed=call.AimedDepartureTime||call.AimedArrivalTime||null; const minutes=minutesFromISO(expected); let delayMin=null; if(expected&&aimed){ const d=Math.round((new Date(expected)-new Date(aimed))/60000); if(Number.isFinite(d)&&d>0) delayMin=d; } const cancelled=/cancel|annul|supprim/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); const atStop=/at.stop|quai|imminent/.test((call.DepartureStatus||call.ArrivalStatus||'').toLowerCase()); return { lineId,dest,expected,aimed,minutes,delayMin,cancelled,atStop,timeStr: expected? new Date(expected).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'' }; }).filter(trip => trip.minutes !== null && trip.minutes >= 0);
+    }
+  }
+  console.log(`No data found for stop IDs: ${stopIdList.join(', ')}`);
+  return [];
+}
 
 async function loadHorizontalHelper(){ if(!window.renderHorizontalTimes){ const s=document.createElement('script'); s.src='partials/horizontal-timeline.js'; document.head.appendChild(s); await new Promise(res=> s.onload=res); } }
 
@@ -83,7 +113,7 @@ function renderBoard(container, groups, areaKey){ if (!container) return; groups
 
 const STATIC_LINES={ 'rer-a': [{lineId:'A',mode:'rer-a',direction:'Vers Paris / La Défense', cCode:'C01742'},{lineId:'A',mode:'rer-a',direction:'Vers Boissy‑Saint‑Léger', cCode:'C01742'}], 'joinville-bus': [{lineId:'77',mode:'bus', cCode:'C01399'},{lineId:'101',mode:'bus', cCode:'C01260'},{lineId:'106',mode:'bus', cCode:'C01371'},{lineId:'108',mode:'bus', cCode:'C01374'},{lineId:'110',mode:'bus', cCode:'C01376'},{lineId:'112',mode:'bus', cCode:'C01379'},{lineId:'201',mode:'bus', cCode:'C01219'},{lineId:'281',mode:'bus', cCode:'C01521'},{lineId:'317',mode:'bus', cCode:'C01693'},{lineId:'N33',mode:'bus', cCode:'C01833'}], 'hippodrome': [{lineId:'77',mode:'bus',direction:'Direction Joinville RER', cCode:'C01399'},{lineId:'77',mode:'bus',direction:'Direction Plateau de Gravelle', cCode:'C01399'},{lineId:'111',mode:'bus', cCode:'C01377'},{lineId:'112',mode:'bus', cCode:'C01379'},{lineId:'201',mode:'bus', cCode:'C01219'}], 'breuil': [{lineId:'77',mode:'bus',direction:'Direction Joinville RER', cCode:'C01399'},{lineId:'201',mode:'bus',direction:'Direction Porte Dorée', cCode:'C01219'},{lineId:'112',mode:'bus', cCode:'C01379'}] };
 
-async function loadTransportData(){ await loadHorizontalHelper(); const [joinvilleData, hippoData, breuilData] = await Promise.all([ fetchStopData(STOP_IDS.JOINVILLE_RER), fetchStopData(STOP_IDS.HIPPODROME), fetchStopData(STOP_IDS.BREUIL) ]); function mergeStaticWithRealtime(staticLines, realTimeData) { return staticLines.map(st => { const liveTrips = realTimeData.filter(v => (v.lineId === st.cCode)); if(liveTrips.length > 0) { return { ...st, trips: liveTrips.slice(0, 3).map(v => ({ waitMin: v.minutes, timeStr: v.timeStr, aimed: v.aimed, dest: v.dest, delayMin: v.delayMin, cancelled: v.cancelled, atStop: v.atStop })), hasRealTimeData: true }; } else { return { ...st, trips: [], hasRealTimeData: false }; } }); } const rerGroups = mergeStaticWithRealtime(STATIC_LINES['rer-a'], joinvilleData); renderBoard(qs('#board-rer-a'), rerGroups, 'JOINVILLE_RER'); const joinvilleBusGroups = mergeStaticWithRealtime(STATIC_LINES['joinville-bus'], joinvilleData); renderBoard(qs('#board-joinville-bus'), joinvilleBusGroups, 'JOINVILLE_RER'); const hippoGroups = mergeStaticWithRealtime(STATIC_LINES['hippodrome'], hippoData); renderBoard(qs('#board-hippodrome'), hippoGroups, 'HIPPODROME'); const breuilGroups = mergeStaticWithRealtime(STATIC_LINES['breuil'], breuilData); renderBoard(qs('#board-breuil'), breuilGroups, 'BREUIL'); }
+async function loadTransportData(){ await loadHorizontalHelper(); const [joinvilleData, hippoData, breuilData] = await Promise.all([ fetchStopDataForAny(STOP_IDS.JOINVILLE_RER), fetchStopDataForAny(STOP_IDS.HIPPODROME), fetchStopDataForAny(STOP_IDS.BREUIL) ]); function mergeStaticWithRealtime(staticLines, realTimeData) { return staticLines.map(st => { const liveTrips = realTimeData.filter(v => (v.lineId === st.cCode)); if(liveTrips.length > 0) { return { ...st, trips: liveTrips.slice(0, 3).map(v => ({ waitMin: v.minutes, timeStr: v.timeStr, aimed: v.aimed, dest: v.dest, delayMin: v.delayMin, cancelled: v.cancelled, atStop: v.atStop })), hasRealTimeData: true }; } else { return { ...st, trips: [], hasRealTimeData: false }; } }); } const rerGroups = mergeStaticWithRealtime(STATIC_LINES['rer-a'], joinvilleData); renderBoard(qs('#board-rer-a'), rerGroups, 'JOINVILLE_RER'); const joinvilleBusGroups = mergeStaticWithRealtime(STATIC_LINES['joinville-bus'], joinvilleData); renderBoard(qs('#board-joinville-bus'), joinvilleBusGroups, 'JOINVILLE_RER'); const hippoGroups = mergeStaticWithRealtime(STATIC_LINES['hippodrome'], hippoData); renderBoard(qs('#board-hippodrome'), hippoGroups, 'HIPPODROME'); const breuilGroups = mergeStaticWithRealtime(STATIC_LINES['breuil'], breuilData); renderBoard(qs('#board-breuil'), breuilGroups, 'BREUIL'); }
 
 function getDestination(lineId, index){ const map={'A': index%2?'Boissy-Saint-Léger':'La Défense - Châtelet','77': index%2?'Joinville RER':'Plateau de Gravelle','201': index%2?'Champigny la Plage':'Porte Dorée','101':'Château de Vincennes','106':'Créteil Université','108':'Maisons-Alfort','110':'Créteil Préfecture','112':'École du Breuil','111':'République','281':'Torcy RER','317':'Val-de-Fontenay','N33':'Château de Vincennes'}; return map[lineId]||`Terminus ${lineId}`; }
 
