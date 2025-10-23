@@ -20,7 +20,7 @@ const LINE_CODES={'77':'C01399','201':'C01219','A':'C01742','101':'C01260','106'
 
 let GTFS=null;
 async function loadGTFSWindow(){
-  try { GTFS = await fetch(toProxied(location.origin + '/MobilVHP/live/gtfs_windows.json'), { cache:'no-cache' }).then(r=> r.ok? r.json(): null); }
+  try { GTFS = await fetch('/MobilVHP/live/gtfs_windows.json', { cache:'no-cache' }).then(r=> r.ok? r.json(): null); }
   catch(e){ GTFS=null; }
 }
 
