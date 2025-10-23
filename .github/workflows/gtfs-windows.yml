@@ -16,13 +16,19 @@ jobs:
           node-version: 20
       - name: Install deps
         run: npm install csv-parse unzipper --no-audit --no-fund || true
-      - name: Download GTFS ZIP (IDFM Datahub)
+      - name: Download GTFS ZIP (IDFM Datahub via header apikey)
         run: |
           set -e
           mkdir -p .gtfs
-          URL="https://data.iledefrance-mobilites.fr/explore/dataset/offre-horaires-tc-gtfs-idfm/files/a925e164271e4bca93433756d6a340d1/download/?apikey=1b2abf94f710bc7922259af63e4b3730f2bbf20a07a04ae42a566aa2"
-          echo "Downloading: $URL"
-          curl -L --fail --retry 3 -H "User-Agent: MobilVHP-GTFS-Builder/1.0" -H "Accept: application/octet-stream" -o .gtfs/idfm_gtfs.zip "$URL"
+          URL="https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/offre-horaires-tc-gtfs-idfm/files/a925e164271e4bca93433756d6a340d1"
+          echo "Downloading (header apikey) from: $URL"
+          curl -L --fail --retry 3 \
+            -H "User-Agent: MobilVHP-GTFS-Builder/1.0" \
+            -H "Accept: application/octet-stream" \
+            -H "apikey: 1b2abf94f710bc7922259af63e4b3730f2bbf20a07a04ae42a566aa2" \
+            -D .gtfs/headers.txt \
+            -o .gtfs/idfm_gtfs.zip "$URL"
+          echo "Response headers:"; cat .gtfs/headers.txt || true
           echo "Downloaded size:" $(wc -c < .gtfs/idfm_gtfs.zip) bytes
           CT=$(file -b --mime-type .gtfs/idfm_gtfs.zip || true)
           echo "Content-Type: $CT"
