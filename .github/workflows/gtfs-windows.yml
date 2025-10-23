@@ -1,0 +1,125 @@
+name: Build GTFS service windows JSON
+on:
+  schedule:
+    - cron: '0 6,12,16 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: write
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install deps
+        run: npm install adm-zip fast-csv node-fetch@2 --no-audit --no-fund || true
+      - name: Download GTFS ZIP (IDFM Datahub)
+        env:
+          GTFS_URL: ${{ secrets.IDFM_GTFS_URL }}
+          GTFS_TOKEN: ${{ secrets.IDFM_GTFS_TOKEN }}
+        run: |
+          set -e
+          mkdir -p .gtfs
+          if [ -z "$GTFS_URL" ]; then echo "::error::Missing secret IDFM_GTFS_URL"; exit 1; fi
+          if [ -z "$GTFS_TOKEN" ]; then echo "::error::Missing secret IDFM_GTFS_TOKEN"; exit 1; fi
+          curl -H "Authorization: Bearer $GTFS_TOKEN" -L "$GTFS_URL" -o .gtfs/idfm_gtfs.zip
+      - name: Generate service windows JSON
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const AdmZip=require('adm-zip');
+          const zip=new AdmZip('.gtfs/idfm_gtfs.zip');
+          const entries={};
+          for(const e of zip.getEntries()) entries[e.entryName]=e.getData().toString('utf8');
+          function parseCSV(txt){
+            const [header,...rows]=txt.trim().split(/\r?\n/).map(l=>l.split(','));
+            const H=header; return rows.map(r=>Object.fromEntries(r.map((v,i)=>[H[i],v])));
+          }
+          const routes=parseCSV(entries['routes.txt']);
+          const trips=parseCSV(entries['trips.txt']);
+          const stops=parseCSV(entries['stops.txt']);
+          const stop_times=parseCSV(entries['stop_times.txt']);
+          const calendar=parseCSV(entries['calendar.txt']);
+          const cal_dates = entries['calendar_dates.txt']? parseCSV(entries['calendar_dates.txt']):[];
+
+          // CONFIG: stops & lines to compute
+          const STOP_IDS={ JOINVILLE_RER: 'STIF:StopArea:SP:43135:', HIPPODROME: 'STIF:StopArea:SP:463641:', BREUIL: 'STIF:StopArea:SP:463644:' };
+          const LINE_CODES={'77':'C01399','201':'C01219','A':'C01742','101':'C01260','106':'C01371','108':'C01374','110':'C01376','112':'C01379','111':'C01377','281':'C01521','317':'C01693','N33':'C01833'};
+
+          // Map StopArea -> stop_id(s)
+          const stopIdsByArea={};
+          for(const s of stops){
+            if(s.stop_code && s.stop_code.includes('StopArea')){
+              (stopIdsByArea[s.stop_code] ||= []).push(s.stop_id);
+            }
+          }
+
+          // Today service_ids active
+          const now=new Date();
+          const y=now.getFullYear(), m=String(now.getMonth()+1).padStart(2,'0'), d=String(now.getDate()).padStart(2,'0');
+          const dow=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][now.getDay()];
+          const dayStr=`${y}${m}${d}`;
+          const activeBase=new Set(calendar.filter(c=> c[dow]==='1' && c.start_date<=dayStr && c.end_date>=dayStr).map(c=>c.service_id));
+          for(const cd of cal_dates){
+            if(cd.date===dayStr){
+              if(cd.exception_type==='1') activeBase.add(cd.service_id);
+              if(cd.exception_type==='2') activeBase.delete(cd.service_id);
+            }
+          }
+
+          // Helpers
+          const routesByLineCode = Object.fromEntries(Object.entries(LINE_CODES).map(([line,code])=>{
+            // heuristic: match routes where route_short_name or route_id contains the line id or C-code
+            const rs = routes.filter(r=> (r.route_short_name===line || r.route_id.includes(code) || r.route_desc?.includes(code)) );
+            return [line, new Set(rs.map(r=>r.route_id))];
+          }));
+
+          function toMinutes(hms){ const [H,M,S]=hms.split(':').map(Number); return H*60+M; }
+          function hhmm(min){ min%=1440; if(min<0) min+=1440; const H=String(Math.floor(min/60)).padStart(2,'0'); const M=String(min%60).padStart(2,'0'); return `${H}:${M}`; }
+
+          const out={};
+          for(const [areaName,areaCode] of Object.entries(STOP_IDS)){
+            const stopIds = stopIdsByArea[areaCode]||[];
+            out[areaName]={};
+            for(const [line,lineCode] of Object.entries(LINE_CODES)){
+              const routeSet = routesByLineCode[line]||new Set();
+              const dayTrips = trips.filter(t=> activeBase.has(t.service_id) && routeSet.has(t.route_id));
+              if(!dayTrips.length){ out[areaName][line]={ first_time:null, last_time:null, tomorrow_first:null }; continue; }
+              const tripIds=new Set(dayTrips.map(t=>t.trip_id));
+              const times = stop_times.filter(st=> tripIds.has(st.trip_id) && stopIds.includes(st.stop_id)).map(st=> st.departure_time||st.arrival_time).filter(Boolean).map(toMinutes).sort((a,b)=>a-b);
+              if(!times.length){ out[areaName][line]={ first_time:null, last_time:null, tomorrow_first:null }; continue; }
+              const first=times[0], last=times[times.length-1];
+
+              // compute tomorrow_first using calendar_dates for tomorrow
+              const tmr=new Date(now.getTime()+24*60*60*1000);
+              const ty=tmr.getFullYear(), tm=String(tmr.getMonth()+1).padStart(2,'0'), td=String(tmr.getDate()).padStart(2,'0');
+              const tDow=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][tmr.getDay()];
+              const tStr=`${ty}${tm}${td}`;
+              const activeTomorrow=new Set(calendar.filter(c=> c[tDow]==='1' && c.start_date<=tStr && c.end_date>=tStr).map(c=>c.service_id));
+              for(const cd of cal_dates){ if(cd.date===tStr){ if(cd.exception_type==='1') activeTomorrow.add(cd.service_id); if(cd.exception_type==='2') activeTomorrow.delete(cd.service_id); } }
+              const tripsTomorrow= trips.filter(t=> activeTomorrow.has(t.service_id) && routeSet.has(t.route_id));
+              let tomorrowFirst=null;
+              if(tripsTomorrow.length){
+                const ids=new Set(tripsTomorrow.map(t=>t.trip_id));
+                const tms= stop_times.filter(st=> ids.has(st.trip_id) && stopIds.includes(st.stop_id)).map(st=> st.departure_time||st.arrival_time).filter(Boolean).map(toMinutes).sort((a,b)=>a-b);
+                if(tms.length) tomorrowFirst=tms[0];
+              }
+
+              out[areaName][line]={ first_time: hhmm(first), last_time: hhmm(last), tomorrow_first: tomorrowFirst!=null? hhmm(tomorrowFirst): null };
+            }
+          }
+
+          fs.mkdirSync('live',{recursive:true});
+          fs.writeFileSync('live/gtfs_windows.json', JSON.stringify(out,null,2));
+          console.log('Generated live/gtfs_windows.json');
+          NODE
+      - name: Commit JSON
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add live/gtfs_windows.json
+          git commit -m "chore(gtfs): update service windows JSON" || echo "No changes"
+          git push
