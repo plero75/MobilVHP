@@ -77,7 +77,7 @@ function gtfsServiceBadge(areaKey,lineKey){
   return null;
 }
 
-function safeRenderHorizontal(trips){ if(window.renderHorizontalTimes) { try { return window.renderHorizontalTimes(trips)||''; } catch(e){ return ''; } } return ''; }
+function safeRenderHorizontal(trips){ return ''; }
 
 function renderBoard(container, groups, areaKey){ if (!container) return; groups=[...groups].sort((a,b)=>{ if(a.lineId==='A'&&b.lineId!=='A') return -1; if(a.lineId!=='A'&&b.lineId==='A') return 1; if(a.lineId===b.lineId) return (a.direction||'').localeCompare(b.direction||''); return (''+a.lineId).localeCompare(''+b.lineId,'fr',{numeric:true}); }); container.innerHTML=''; if(!groups.length){ container.appendChild(el('div','group', '<div class=\"row\"><div class=\"info\"><div class=\"dest\">Aucune donnée transport disponible</div></div></div>')); return; } groups.forEach(g=>{ const group=el('div','group'); const head=el('div','group-head'); const pill=el('div',`pill ${g.mode==='rer-a'?'rer-a':'bus'}`, g.mode==='rer-a'?'A':g.lineId); pill.style.background=colorFor(g); const dir=el('div','dir', g.direction || g.dest || ''); head.append(pill,dir); const badge=gtfsServiceBadge(areaKey, g.lineId); if(badge){ const b=el('div','badge',badge); head.appendChild(b); } group.appendChild(head); const block=el('div','row'); let html = safeRenderHorizontal(g.trips||[]); if((!html || /^(\s|<[^>]*>)*$/.test(html)) && !badge){ html = renderChips(g.trips); } else if((!html || /^(\s|<[^>]*>)*$/.test(html)) && badge){ html = badge; } block.innerHTML = html; group.appendChild(block); container.appendChild(group); }); }
 
