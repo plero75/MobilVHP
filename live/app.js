@@ -18,6 +18,46 @@ const STOP_IDS = { JOINVILLE_RER: "STIF:StopArea:SP:43135:", HIPPODROME: "STIF:S
 
 const LINE_CODES={'77':'C01399','201':'C01219','A':'C01742','101':'C01260','106':'C01371','108':'C01374','110':'C01376','112':'C01379','111':'C01377','281':'C01521','317':'C01693','N33':'C01833'};
 
+const SERVICE_WINDOWS={
+  // Heures approximatives de premier/dernier départ (24h local) – à ajuster si besoin
+  'A': {start: 5*60, end: 1*60},        // RER A ~05:00 → ~01:00
+  '77': {start: 5*60, end: 1*60},
+  '201': {start: 5*60, end: 1*60},
+  '101': {start: 5*60, end: 0},
+  '106': {start: 5*60, end: 1*60},
+  '108': {start: 5*60, end: 1*60},
+  '110': {start: 5*60, end: 1*60},
+  '112': {start: 5*60, end: 1*60},
+  '111': {start: 5*60, end: 1*60},
+  '281': {start: 5*60, end: 1*60},
+  '317': {start: 5*60, end: 1*60},
+  'N33': {start: 0, end: 6*60}          // Noctilien (exemple)
+};
+
+function nextServiceTime(lineId, now=new Date()){
+  const d=new Date(now);
+  const mins= d.getHours()*60 + d.getMinutes();
+  const win = SERVICE_WINDOWS[lineId] || {start: 6*60, end: 23*60};
+  const {start,end} = win;
+  if (start===0 && end===0) return null;
+  // Cas service qui passe minuit (end < start) → fin à J+1
+  const serviceRunning = end>start ? (mins>=start && mins<end) : (mins>=start || mins<end);
+  if (serviceRunning) return null;
+  // Calcul de la prochaine reprise
+  let targetMins = start;
+  if (end>start){
+    // service diurne: reprise au start du jour courant si déjà avant start, sinon au lendemain
+    targetMins = mins<start ? start : start + 24*60;
+  } else {
+    // service nocturne: reprise à start ce soir si après end, sinon à start du jour courant
+    targetMins = mins>=end ? start : start; // start "ce soir" dans tous les cas, la différence se gère avec le jour
+    if (mins>=end) d.setDate(d.getDate()); else d.setDate(d.getDate());
+  }
+  const target=new Date(d.getFullYear(), d.getMonth(), d.getDate(), Math.floor(targetMins/60), targetMins%60, 0);
+  if (target < now) target.setDate(target.getDate()+1);
+  return target;
+}
+
 const qs = (s, el=document) => el.querySelector(s);
 const el = (tag, cls, html) => { const n=document.createElement(tag); if(cls) n.className=cls; if(html!=null) n.innerHTML=html; return n; };
 
@@ -44,9 +84,9 @@ async function fetchStopData(stopId){ const d=await fetchAPI(APIS.PRIM_STOP(stop
 
 async function loadHorizontalHelper(){ if(!window.renderHorizontalTimes){ const s=document.createElement('script'); s.src='partials/horizontal-timeline.js'; document.head.appendChild(s); await new Promise(res=> s.onload=res); } }
 
-function renderHorizontalTimes(trips){ return window.renderHorizontalTimes? window.renderHorizontalTimes(trips) : ''; }
+function renderChips(trips){ return (trips||[]).slice(0,3).map(t=>{ const label = t.timeStr || (Number.isFinite(t.waitMin)? `+${t.waitMin} min` : '—'); const meta = t.cancelled? ' (supprimé)' : (t.delayMin? ` (+${t.delayMin})` : ''); return `<span class="chip">${label}${meta}</span>`; }).join('') || '<span class="chip">—</span>'; }
 
-function renderBoard(container, groups){ if (!container) return; groups=[...groups].sort((a,b)=>{ if(a.lineId==='A'&&b.lineId!=='A') return -1; if(a.lineId!=='A'&&b.lineId==='A') return 1; if(a.lineId===b.lineId) return (a.direction||'').localeCompare(b.direction||''); return (''+a.lineId).localeCompare(''+b.lineId,'fr',{numeric:true}); }); container.innerHTML=''; if(!groups.length){ container.appendChild(el('div','group', '<div class="row"><div class="info"><div class="dest">Aucune donnée transport disponible</div></div></div>')); return; } groups.forEach(g=>{ const group=el('div','group'); const head=el('div','group-head'); const pill=el('div',`pill ${g.mode==='rer-a'?'rer-a':'bus'}`, g.mode==='rer-a'?'A':g.lineId); pill.style.background=colorFor(g); const dir=el('div','dir', g.direction || g.dest || ''); head.append(pill,dir); group.appendChild(head); const block=el('div','row'); let html = renderHorizontalTimes(g.trips||[]); if(!html){ html = (g.trips||[]).slice(0,3).map(t=>{ const label = t.timeStr || (Number.isFinite(t.waitMin)? `+${t.waitMin} min` : '—'); const meta = t.cancelled? ' (supprimé)' : (t.delayMin? ` (+${t.delayMin})` : ''); return `<span class="chip">${label}${meta}</span>`; }).join('') || '<span class="chip">—</span>'; } block.innerHTML = html; group.appendChild(block); container.appendChild(group); }); }
+function renderBoard(container, groups){ if (!container) return; groups=[...groups].sort((a,b)=>{ if(a.lineId==='A'&&b.lineId!=='A') return -1; if(a.lineId!=='A'&&b.lineId==='A') return 1; if(a.lineId===b.lineId) return (a.direction||'').localeCompare(b.direction||''); return (''+a.lineId).localeCompare(''+b.lineId,'fr',{numeric:true}); }); container.innerHTML=''; if(!groups.length){ container.appendChild(el('div','group', '<div class="row"><div class="info"><div class="dest">Aucune donnée transport disponible</div></div></div>')); return; } groups.forEach(g=>{ const group=el('div','group'); const head=el('div','group-head'); const pill=el('div',`pill ${g.mode==='rer-a'?'rer-a':'bus'}`, g.mode==='rer-a'?'A':g.lineId); pill.style.background=colorFor(g); const dir=el('div','dir', g.direction || g.dest || ''); head.append(pill,dir); group.appendChild(head); const block=el('div','row'); let html = window.renderHorizontalTimes? window.renderHorizontalTimes(g.trips||[]) : ''; if(!html || /^(\s|<[^>]*>)*$/.test(html)) html = renderChips(g.trips); block.innerHTML = html; group.appendChild(block); container.appendChild(group); }); }
 
 const STATIC_LINES={ 'rer-a': [{lineId:'A',mode:'rer-a',direction:'Vers Paris / La Défense', cCode:'C01742'},{lineId:'A',mode:'rer-a',direction:'Vers Boissy‑Saint‑Léger', cCode:'C01742'}], 'joinville-bus': [{lineId:'77',mode:'bus', cCode:'C01399'},{lineId:'101',mode:'bus', cCode:'C01260'},{lineId:'106',mode:'bus', cCode:'C01371'},{lineId:'108',mode:'bus', cCode:'C01374'},{lineId:'110',mode:'bus', cCode:'C01376'},{lineId:'112',mode:'bus', cCode:'C01379'},{lineId:'201',mode:'bus', cCode:'C01219'},{lineId:'281',mode:'bus', cCode:'C01521'},{lineId:'317',mode:'bus', cCode:'C01693'},{lineId:'N33',mode:'bus', cCode:'C01833'}], 'hippodrome': [{lineId:'77',mode:'bus',direction:'Direction Joinville RER', cCode:'C01399'},{lineId:'77',mode:'bus',direction:'Direction Plateau de Gravelle', cCode:'C01399'},{lineId:'111',mode:'bus', cCode:'C01377'},{lineId:'112',mode:'bus', cCode:'C01379'},{lineId:'201',mode:'bus', cCode:'C01219'}], 'breuil': [{lineId:'77',mode:'bus',direction:'Direction Joinville RER', cCode:'C01399'},{lineId:'201',mode:'bus',direction:'Direction Porte Dorée', cCode:'C01219'},{lineId:'112',mode:'bus', cCode:'C01379'}] };
 
