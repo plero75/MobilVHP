@@ -16,33 +16,21 @@ jobs:
           node-version: 20
       - name: Install deps
         run: npm install csv-parse unzipper --no-audit --no-fund || true
-      - name: Download GTFS ZIP (IDFM Datahub via header apikey)
+      - name: Download GTFS ZIP (public FTP mirror)
         run: |
           set -e
           mkdir -p .gtfs
           URL="https://eu.ftp.opendatasoft.com/stif/GTFS/IDFM-gtfs.zip"
-          echo "Downloading (header apikey) from: $URL"
-          curl -L --fail --retry 3 \
-            -H "User-Agent: MobilVHP-GTFS-Builder/1.0" \
-            -H "Accept: application/octet-stream" \
-            -H "apikey: 1b2abf94f710bc7922259af63e4b3730f2bbf20a07a04ae42a566aa2" \
-            -D .gtfs/headers.txt \
-            -o .gtfs/idfm_gtfs.zip "$URL"
-          echo "Response headers:"; cat .gtfs/headers.txt || true
+          echo "Downloading from: $URL"
+          curl -L --fail --retry 3 -H "User-Agent: MobilVHP-GTFS-Builder/1.0" -o .gtfs/idfm_gtfs.zip "$URL"
           echo "Downloaded size:" $(wc -c < .gtfs/idfm_gtfs.zip) bytes
-          CT=$(file -b --mime-type .gtfs/idfm_gtfs.zip || true)
-          echo "Content-Type: $CT"
-          if [ "$CT" != "application/zip" ] && [ "$CT" != "application/x-zip-compressed" ] && [ "$CT" != "application/octet-stream" ]; then
-            echo "::error::Fichier non ZIP (Content-Type: $CT)";
-            head -c 2000 .gtfs/idfm_gtfs.zip | sed -e 's/[^[:print:]\t]/./g' || true; exit 2;
-          fi
           unzip -t .gtfs/idfm_gtfs.zip
       - name: Extract specific CSV files
         run: |
           set -e
           cd .gtfs
           unzip -q idfm_gtfs.zip routes.txt trips.txt stops.txt stop_times.txt calendar.txt calendar_dates.txt
-      - name: Generate service windows JSON with streaming
+      - name: Generate service windows JSON with correct StopArea mapping
         run: |
           node - <<'NODE'
           const fs=require('fs');
@@ -64,10 +52,43 @@ jobs:
           const calendar = parseCsvSync('calendar.txt');
           const cal_dates = fs.existsSync('.gtfs/calendar_dates.txt') ? parseCsvSync('calendar_dates.txt') : [];
 
-          const stopIdsByArea={};
-          for(const s of stops){
-            if(s.stop_code && s.stop_code.includes('StopArea')){
-              (stopIdsByArea[s.stop_code] ||= []).push(s.stop_id);
+          // Build StopArea -> station stop_id mapping via location_type
+          console.log('Building StopArea -> station mapping...');
+          const stationsByCode = new Map();
+          for (const s of stops) {
+            if ((s.location_type || '0') === '1' && s.stop_code) {
+              stationsByCode.set(s.stop_code, s.stop_id);
+            }
+          }
+
+          const areaStationId = {};
+          for (const [areaName, areaCode] of Object.entries(STOP_IDS)) {
+            const stationId = stationsByCode.get(areaCode);
+            if (stationId) {
+              areaStationId[areaName] = stationId;
+              console.log(`Found station ${stationId} for ${areaName} (${areaCode})`);
+            } else {
+              console.log(`No station found for ${areaName} (${areaCode})`);
+            }
+          }
+
+          // Build StopArea -> child stop_ids
+          const stopIdsByArea = {};
+          for (const [areaName, stationId] of Object.entries(areaStationId)) {
+            const childStops = stops.filter(s => (s.location_type || '0') === '0' && s.parent_station === stationId);
+            const stopIds = childStops.map(s => s.stop_id);
+            stopIdsByArea[STOP_IDS[areaName]] = stopIds;
+            console.log(`${areaName}: found ${stopIds.length} child stops`);
+          }
+
+          // Fallback: if no child stops found via parent_station, try direct stop_code match
+          for (const [areaName, areaCode] of Object.entries(STOP_IDS)) {
+            if (!stopIdsByArea[areaCode] || stopIdsByArea[areaCode].length === 0) {
+              const directStops = stops.filter(s => s.stop_code === areaCode);
+              if (directStops.length > 0) {
+                stopIdsByArea[areaCode] = directStops.map(s => s.stop_id);
+                console.log(`${areaName}: fallback to direct match, found ${directStops.length} stops`);
+              }
             }
           }
 
@@ -78,8 +99,13 @@ jobs:
           const activeBase=new Set(calendar.filter(c=> c[dow]==='1' && c.start_date<=dayStr && c.end_date>=dayStr).map(c=>c.service_id));
           for(const cd of cal_dates){ if(cd.date===dayStr){ if(cd.exception_type==='1') activeBase.add(cd.service_id); if(cd.exception_type==='2') activeBase.delete(cd.service_id); } }
 
+          // Prioritize route_short_name, fallback to code matching
           const routesByLineCode = Object.fromEntries(Object.entries(LINE_CODES).map(([line,code])=>{
-            const rs = routes.filter(r=> (r.route_short_name===line || r.route_id.includes(code) || (r.route_desc||'').includes(code)) );
+            let rs = routes.filter(r=> r.route_short_name === line);
+            if (rs.length === 0) {
+              rs = routes.filter(r=> r.route_id.includes(code) || (r.route_desc||'').includes(code));
+            }
+            console.log(`Line ${line}: found ${rs.length} routes`);
             return [line, new Set(rs.map(r=>r.route_id))];
           }));
 
@@ -88,8 +114,12 @@ jobs:
           const targetStopIds = new Set();
           Object.values(stopIdsByArea).forEach(arr => arr.forEach(s => targetStopIds.add(s)));
 
+          console.log(`Target routes: ${targetRoutes.size}, target stops: ${targetStopIds.size}`);
+
           const dayTripsAll = trips.filter(t => activeBase.has(t.service_id) && targetRoutes.has(t.route_id));
           const targetTripIds = new Set(dayTripsAll.map(t => t.trip_id));
+
+          console.log(`Active trips today: ${targetTripIds.size}`);
 
           console.log('Filtering stop_times (streaming)...');
 
