@@ -55,7 +55,16 @@ async function fetchStopData(stopId){ const d=await fetchAPI(APIS.PRIM_STOP(stop
 
 async function loadHorizontalHelper(){ if(!window.renderHorizontalTimes){ const s=document.createElement('script'); s.src='partials/horizontal-timeline.js'; document.head.appendChild(s); await new Promise(res=> s.onload=res); } }
 
-function renderChips(trips){ return (trips||[]).slice(0,3).map(t=>{ const label = t.timeStr || (Number.isFinite(t.waitMin)? `+${t.waitMin} min` : '—'); const meta = t.cancelled? ' (supprimé)' : (t.delayMin? ` (+${t.delayMin})` : ''); return `<span class=\"chip\">${label}${meta}</span>`; }).join('') || '<span class=\"chip\">—</span>'; }
+function renderChips(trips){
+  return (trips||[]).slice(0,3).map(t=>{
+    const waited = Number.isFinite(t.waitMin||t.minutes) ? ` (+${t.waitMin||t.minutes})` : '';
+    if (t.delayMin>0 && t.aimed){
+      const aimedStr = new Date(t.aimed).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+      return `<span class=\"chip\"><s>${aimedStr}</s> ${t.timeStr} (+${t.delayMin})${waited}</span>`;
+    }
+    return `<span class=\"chip\">${t.timeStr || (Number.isFinite(t.waitMin)? `+${t.waitMin} min` : '—')}</span>`;
+  }).join('') || '<span class=\"chip\">—</span>';
+}
 
 function gtfsServiceBadge(areaKey,lineKey){
   if(!GTFS||!GTFS[areaKey]||!GTFS[areaKey][lineKey]) return null;
