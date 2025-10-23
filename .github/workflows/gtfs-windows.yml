@@ -20,7 +20,17 @@ jobs:
         run: |
           set -e
           mkdir -p .gtfs
-          curl -L "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/offre-horaires-tc-gtfs-idfm/files/a925e164271e4bca93433756d6a340d1/download/?apikey=1b2abf94f710bc7922259af63e4b3730f2bbf20a07a04ae42a566aa2" -o .gtfs/idfm_gtfs.zip
+          URL="https://data.iledefrance-mobilites.fr/explore/dataset/offre-horaires-tc-gtfs-idfm/files/a925e164271e4bca93433756d6a340d1/download/?apikey=1b2abf94f710bc7922259af63e4b3730f2bbf20a07a04ae42a566aa2"
+          echo "Downloading: $URL"
+          curl -L --fail --retry 3 -H "User-Agent: MobilVHP-GTFS-Builder/1.0" -H "Accept: application/octet-stream" -o .gtfs/idfm_gtfs.zip "$URL"
+          echo "Downloaded size:" $(wc -c < .gtfs/idfm_gtfs.zip) bytes
+          CT=$(file -b --mime-type .gtfs/idfm_gtfs.zip || true)
+          echo "Content-Type: $CT"
+          if [ "$CT" != "application/zip" ] && [ "$CT" != "application/x-zip-compressed" ] && [ "$CT" != "application/octet-stream" ]; then
+            echo "::error::Fichier non ZIP (Content-Type: $CT)";
+            head -c 2000 .gtfs/idfm_gtfs.zip | sed -e 's/[^[:print:]\t]/./g' || true; exit 2;
+          fi
+          unzip -t .gtfs/idfm_gtfs.zip
       - name: Extract specific CSV files
         run: |
           set -e
@@ -48,7 +58,6 @@ jobs:
           const calendar = parseCsvSync('calendar.txt');
           const cal_dates = fs.existsSync('.gtfs/calendar_dates.txt') ? parseCsvSync('calendar_dates.txt') : [];
 
-          // Build filtration sets
           const stopIdsByArea={};
           for(const s of stops){
             if(s.stop_code && s.stop_code.includes('StopArea')){
@@ -76,7 +85,7 @@ jobs:
           const dayTripsAll = trips.filter(t => activeBase.has(t.service_id) && targetRoutes.has(t.route_id));
           const targetTripIds = new Set(dayTripsAll.map(t => t.trip_id));
 
-          console.log('Filtering stop_times (may take 30-60 seconds)...');
+          console.log('Filtering stop_times (streaming)...');
 
           const relevantTimes = [];
           const rl = readline.createInterface({
@@ -85,86 +94,66 @@ jobs:
           });
 
           let header = null;
-          for await (const line of rl) {
-            if (!header) {
-              header = line.split(',');
-              continue;
-            }
-            const parts = [];
-            let cur = '';
-            let inQuotes = false;
-            for (let i = 0; i < line.length; i++) {
-              const ch = line[i];
-              if (ch === '"') {
-                inQuotes = !inQuotes;
-                continue;
+          (async () => {
+            for await (const line of rl) {
+              if (!header) { header = line.split(','); continue; }
+              const parts = [];
+              let cur = '';
+              let inQuotes = false;
+              for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') { inQuotes = !inQuotes; continue; }
+                if (ch === ',' && !inQuotes) { parts.push(cur); cur = ''; } else { cur += ch; }
               }
-              if (ch === ',' && !inQuotes) {
-                parts.push(cur);
-                cur = '';
-              } else {
-                cur += ch;
-              }
-            }
-            parts.push(cur);
+              parts.push(cur);
 
-            const row = {};
-            header.forEach((h, i) => row[h] = parts[i] || '');
+              const row = {}; header.forEach((h, i) => row[h] = parts[i] || '');
+              if (!targetTripIds.has(row.trip_id)) continue;
+              if (!targetStopIds.has(row.stop_id)) continue;
 
-            if (targetTripIds.has(row.trip_id) && targetStopIds.has(row.stop_id)) {
               const time = row.departure_time || row.arrival_time;
-              if (time) {
-                relevantTimes.push({ trip_id: row.trip_id, stop_id: row.stop_id, time });
+              if (time) relevantTimes.push({ trip_id: row.trip_id, stop_id: row.stop_id, time });
+            }
+
+            console.log(`Found ${relevantTimes.length} relevant stop times`);
+
+            function toMinutes(hms){ const [H,M,S='0']=hms.split(':'); return parseInt(H,10)*60+parseInt(M,10); }
+            function hhmm(min){ min%=1440; if(min<0) min+=1440; const H=String(Math.floor(min/60)).padStart(2,'0'); const M=String(min%60).padStart(2,'0'); return `${H}:${M}`; }
+
+            const tmr=new Date(now.getTime()+24*60*60*1000);
+            const ty=tmr.getFullYear(), tm=String(tmr.getMonth()+1).padStart(2,'0'), td=String(tmr.getDate()).padStart(2,'0');
+            const tDow=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][tmr.getDay()];
+            const tStr=`${ty}${tm}${td}`;
+            const activeTomorrow=new Set(calendar.filter(c=> c[tDow]==='1' && c.start_date<=tStr && c.end_date>=tStr).map(c=>c.service_id));
+            for(const cd of cal_dates){ if(cd.date===tStr){ if(cd.exception_type==='1') activeTomorrow.add(cd.service_id); if(cd.exception_type==='2') activeTomorrow.delete(cd.service_id); } }
+
+            const tomorrowTrips = trips.filter(t => activeTomorrow.has(t.service_id) && targetRoutes.has(t.route_id));
+            const tomorrowTripIds = new Set(tomorrowTrips.map(t => t.trip_id));
+
+            const out={};
+            for(const [areaName,areaCode] of Object.entries(STOP_IDS)){
+              const stopIds = stopIdsByArea[areaCode]||[];
+              out[areaName]={};
+              for(const [line] of Object.entries(LINE_CODES)){
+                const routeSet = routesByLineCode[line]||new Set();
+                const lineTrips = dayTripsAll.filter(t => routeSet.has(t.route_id));
+                if(!lineTrips.length){ out[areaName][line]={ first_time:null, last_time:null, tomorrow_first:null }; continue; }
+                const lineTripIds = new Set(lineTrips.map(t => t.trip_id));
+                const times = relevantTimes.filter(rt => lineTripIds.has(rt.trip_id) && stopIds.includes(rt.stop_id)).map(rt => toMinutes(rt.time)).filter(t => t >= 0).sort((a,b) => a-b);
+                if(!times.length){ out[areaName][line]={ first_time:null, last_time:null, tomorrow_first:null }; continue; }
+                const first=times[0], last=times[times.length-1];
+                const tomorrowLineTrips = tomorrowTrips.filter(t => routeSet.has(t.route_id));
+                const tomorrowLineTripIds = new Set(tomorrowLineTrips.map(t => t.trip_id));
+                const tomorrowTimes = relevantTimes.filter(rt => tomorrowLineTripIds.has(rt.trip_id) && stopIds.includes(rt.stop_id)).map(rt => toMinutes(rt.time)).filter(t => t >= 0).sort((a,b) => a-b);
+                const tomorrowFirst = tomorrowTimes.length ? tomorrowTimes[0] : null;
+                out[areaName][line]={ first_time: hhmm(first), last_time: hhmm(last), tomorrow_first: tomorrowFirst ? hhmm(tomorrowFirst) : null };
               }
             }
-          }
 
-          console.log(`Found ${relevantTimes.length} relevant stop times`);
-
-          function toMinutes(hms){ const [H,M,S='0']=hms.split(':'); return parseInt(H,10)*60+parseInt(M,10); }
-          function hhmm(min){ min%=1440; if(min<0) min+=1440; const H=String(Math.floor(min/60)).padStart(2,'0'); const M=String(min%60).padStart(2,'0'); return `${H}:${M}`; }
-
-          // Compute tomorrow service_ids
-          const tmr=new Date(now.getTime()+24*60*60*1000);
-          const ty=tmr.getFullYear(), tm=String(tmr.getMonth()+1).padStart(2,'0'), td=String(tmr.getDate()).padStart(2,'0');
-          const tDow=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][tmr.getDay()];
-          const tStr=`${ty}${tm}${td}`;
-          const activeTomorrow=new Set(calendar.filter(c=> c[tDow]==='1' && c.start_date<=tStr && c.end_date>=tStr).map(c=>c.service_id));
-          for(const cd of cal_dates){ if(cd.date===tStr){ if(cd.exception_type==='1') activeTomorrow.add(cd.service_id); if(cd.exception_type==='2') activeTomorrow.delete(cd.service_id); } }
-
-          const tomorrowTrips = trips.filter(t => activeTomorrow.has(t.service_id) && targetRoutes.has(t.route_id));
-          const tomorrowTripIds = new Set(tomorrowTrips.map(t => t.trip_id));
-
-          const out={};
-          for(const [areaName,areaCode] of Object.entries(STOP_IDS)){
-            const stopIds = stopIdsByArea[areaCode]||[];
-            out[areaName]={};
-            for(const [line] of Object.entries(LINE_CODES)){
-              const routeSet = routesByLineCode[line]||new Set();
-              const lineTrips = dayTripsAll.filter(t => routeSet.has(t.route_id));
-              
-              if(!lineTrips.length){ out[areaName][line]={ first_time:null, last_time:null, tomorrow_first:null }; continue; }
-              
-              const lineTripIds = new Set(lineTrips.map(t => t.trip_id));
-              const times = relevantTimes.filter(rt => lineTripIds.has(rt.trip_id) && stopIds.includes(rt.stop_id)).map(rt => toMinutes(rt.time)).filter(t => t >= 0).sort((a,b) => a-b);
-              
-              if(!times.length){ out[areaName][line]={ first_time:null, last_time:null, tomorrow_first:null }; continue; }
-              
-              const first=times[0], last=times[times.length-1];
-
-              // Tomorrow times
-              const tomorrowLineTrips = tomorrowTrips.filter(t => routeSet.has(t.route_id));
-              const tomorrowLineTripIds = new Set(tomorrowLineTrips.map(t => t.trip_id));
-              const tomorrowTimes = relevantTimes.filter(rt => tomorrowLineTripIds.has(rt.trip_id) && stopIds.includes(rt.stop_id)).map(rt => toMinutes(rt.time)).filter(t => t >= 0).sort((a,b) => a-b);
-              const tomorrowFirst = tomorrowTimes.length ? tomorrowTimes[0] : null;
-
-              out[areaName][line]={ first_time: hhmm(first), last_time: hhmm(last), tomorrow_first: tomorrowFirst ? hhmm(tomorrowFirst) : null };
-            }
-          }
-
-          fs.mkdirSync('live', { recursive: true });
-          fs.writeFileSync('live/gtfs_windows.json', JSON.stringify(out, null, 2));
-          console.log('Generated live/gtfs_windows.json with', Object.keys(out).length, 'areas');
+            fs.mkdirSync('live', { recursive: true });
+            fs.writeFileSync('live/gtfs_windows.json', JSON.stringify(out, null, 2));
+            console.log('Generated live/gtfs_windows.json with', Object.keys(out).length, 'areas');
+          })();
           NODE
       - name: Commit JSON
         run: |
