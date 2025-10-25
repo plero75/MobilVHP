@@ -1,12 +1,52 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="refresh" content="0; url=/MobilVHP/live/" />
-    <title>MobilVHP</title>
-  </head>
-  <body>
-    <noscript>Redirection vers /live/ ...</noscript>
-  </body>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transports en direct – Hippodrome de Vincennes</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <img src="./assets/idfm.svg" alt="IDFM" class="logo"/>
+      <h1>Transports en direct – Hippodrome de Vincennes</h1>
+    </div>
+    <div id="news-ticker" class="news">Chargement des actualités…</div>
+  </header>
+
+  <main class="grid">
+    <section class="panel transport-panel">
+      <h2>RER A — Joinville-le-Pont</h2>
+      <div id="traffic-rer-a" class="traffic-banner hidden"></div>
+      <div id="board-rer-a" class="board">Chargement…</div>
+    </section>
+
+    <section class="panel transport-panel">
+      <h2>Bus — Joinville-le-Pont (toutes lignes)</h2>
+      <div id="traffic-bus" class="traffic-banner hidden"></div>
+      <div id="board-joinville-bus" class="board">Chargement…</div>
+    </section>
+
+    <section class="panel side">
+      <h2>Météo (Joinville/Vincennes)</h2>
+      <div id="meteo" class="meteo">Chargement météo…</div>
+    </section>
+
+    <section class="panel side">
+      <h2>Vélib’ — Stations proches</h2>
+      <div id="velib" class="velib">Chargement Vélib’…</div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="logos">
+      <img src="./assets/ratp.svg" class="logo" alt="RATP"/>
+      <img src="./assets/idfm.svg" class="logo" alt="IDFM"/>
+    </div>
+    <small>RATPVHP – Dashboard local. Données : Île‑de‑France Mobilités (PRIM), Open‑Meteo, Vélib’, France Info.</small>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
 </html>

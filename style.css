@@ -1,0 +1,74 @@
+
+:root{
+  --bg: #e9f2ff;
+  --panel: #fff;
+  --accent: #0055c3;
+  --text: #0b1f33;
+  --muted: #6b7a90;
+  --warn: #ffcc00;
+  --bad: #e74c3c;
+  --ok: #27ae60;
+  --shadow: 0 8px 24px rgba(0,0,0,.08);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body{
+  margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: linear-gradient(180deg, #f4f8ff 0%, var(--bg) 100%);
+  color: var(--text);
+}
+
+.header{
+  display:flex; flex-direction:column; gap:.5rem; padding:1rem 1.25rem;
+  background: linear-gradient(90deg, #0068ff 0%, #1d8dff 100%);
+  color:#fff; position: sticky; top:0; z-index: 10;
+  box-shadow: var(--shadow);
+}
+.header .brand{ display:flex; align-items:center; gap:.75rem; }
+.header .logo{ width:36px; height:36px; filter: drop-shadow(0 2px 4px rgba(0,0,0,.2)); }
+.header h1{ margin:0; font-size: clamp(1.1rem, 2.4vw, 1.5rem); }
+
+.news{
+  white-space: nowrap; overflow:hidden; text-overflow:ellipsis;
+  background: rgba(255,255,255,.15); border-radius: 10px; padding:.5rem .75rem;
+  font-weight: 600;
+}
+
+.grid{
+  display:grid; gap:1rem; padding:1rem; max-width: 1200px; margin: 0 auto;
+  grid-template-columns: 2fr 1fr;
+}
+.panel{
+  background: var(--panel); border-radius: 16px; padding:1rem; box-shadow: var(--shadow);
+}
+.panel h2{ margin:.25rem 0 1rem 0; color: var(--accent); font-size:1.1rem; }
+
+.board{ display:flex; flex-direction:column; gap:.5rem; }
+.row{ display:flex; align-items:center; gap:.75rem; flex-wrap: wrap; }
+.row.ended{ color: var(--muted); font-style: italic; }
+.dest-group{ border:1px dashed #d8e3f8; border-radius:12px; padding:.5rem .75rem; }
+.dest-head{ font-weight:700; color:#143b6b; margin-bottom:.25rem; }
+.cells{ display:flex; gap:.75rem; flex-wrap: wrap; }
+.cell{ background:#f5f9ff; border:1px solid #e6eefc; padding:.35rem .5rem; border-radius:10px; }
+.cell s{ color:#9aa9bf; }
+.delay{ color:#e67e22; font-weight:600; margin-left:.25rem; }
+.cancelled{ color: var(--bad); font-weight:700; margin-left:.25rem; }
+.imminent{ color: var(--ok); font-weight:700; margin-left:.25rem; }
+
+.line-block{ padding:.5rem 0; border-bottom:1px dashed #e6eefc; }
+.line-head .chip{ display:inline-block; padding:0 6px; border-radius:6px; background: var(--accent); color:#fff; font-weight:800; margin-right:.35rem; }
+
+.traffic-banner{ background: var(--warn); color:#000; padding:.35rem .5rem; border-radius:8px; font-weight:700; }
+.hidden{ display:none; }
+
+.meteo, .velib{ display:flex; flex-direction:column; gap:.5rem; }
+
+.footer{
+  text-align:center; color:#2c3e50; padding:1rem; opacity:.9;
+}
+.footer .logos{ display:flex; gap:1rem; justify-content:center; margin-bottom:.25rem; }
+.footer .logo{ width:36px; height:36px; }
+@media (max-width: 920px){
+  .grid{ grid-template-columns: 1fr; }
+}
